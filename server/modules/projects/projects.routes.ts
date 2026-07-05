@@ -1,5 +1,7 @@
 import express from 'express';
+import { spawnSync } from 'node:child_process';
 
+import { projectsDb } from '@/modules/database/index.js';
 import { createProject, updateProjectDisplayName } from '@/modules/projects/services/project-management.service.js';
 import { startCloneProject } from '@/modules/projects/services/project-clone.service.js';
 import { getProjectTaskMaster } from '@/modules/projects/services/projects-has-taskmaster.service.js';
@@ -237,6 +239,109 @@ router.put('/:projectId/rename', (req, res) => {
     res.status(500).json({ error: error instanceof Error ? error.message : 'Failed to rename project' });
   }
 });
+
+/**
+ * Set (or clear) the GitHub remote URL stored on the project.
+ *
+ * Body: { url: string | null }
+ * - `url` non-empty → stored in `projects.github_remote_url` AND, if the project
+ *   is already a git repo, mirrored to `git remote origin` (set-url or add).
+ * - `url` null/empty → clears the column. The local `origin` remote is left
+ *   alone (don't surprise the user by deleting their manual config).
+ *
+ * This is the source of truth for "where should this project push to". The
+ * `/api/git/init` endpoint also reads from this column when initializing a new
+ * repo, so a project that was created locally and later gets a URL here
+ * becomes publishable by clicking "Initialize Repository" in the panel.
+ */
+router.put('/:projectId/github-remote', (req, res) => {
+  try {
+    const projectId = typeof req.params.projectId === 'string' ? req.params.projectId : '';
+    if (!projectId) {
+      return res.status(400).json({ error: 'projectId is required' });
+    }
+
+    const { url } = req.body as { url?: unknown };
+    const normalized =
+      typeof url === 'string' && url.trim().length > 0 ? url.trim() : null;
+
+    // Basic shape check: accept https://, http://, git@, ssh://. Reject
+    // anything that looks like a path or a clearly malformed value so the
+    // user gets feedback before they save.
+    if (normalized !== null) {
+      const looksLikeUrl = /^(https?:\/\/|git@|ssh:\/\/)/i.test(normalized);
+      if (!looksLikeUrl) {
+        return res.status(400).json({
+          error: 'Invalid GitHub URL',
+          details: 'Expected an https://, http://, git@, or ssh:// URL.',
+        });
+      }
+    }
+
+    projectsDb.setGithubRemoteUrlById(projectId, normalized);
+
+    // Mirror the new value to the local git remote if the project is already
+    // a repo. If it isn't yet a repo, leave the working tree alone — the next
+    // time the user clicks "Initialize Repository" we'll wire it up.
+    const projectPath = projectsDb.getProjectPathById(projectId);
+    let remoteAction: string = 'skipped';
+    if (projectPath && normalized !== null) {
+      const mirror = mirrorRemoteFromDb(projectPath, normalized);
+      remoteAction = mirror.action;
+    } else if (projectPath && normalized === null) {
+      remoteAction = 'cleared_in_db_remote_untouched';
+    }
+
+    res.json({ success: true, url: normalized, remoteAction });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Failed to set GitHub remote' });
+  }
+});
+
+/**
+ * Helper: write `dbUrl` to the local `origin` remote in `projectPath` if the
+ * directory is already a git repo. Returns a short action tag the route uses
+ * for the response payload.
+ *
+ * - `add` → no existing origin, `git remote add origin <url>` ran.
+ * - `updated` → origin existed with a different URL, `git remote set-url` ran.
+ * - `unchanged` → origin already pointed at `dbUrl`.
+ * - `not_a_repo` → the path isn't a git repo yet, nothing to do.
+ */
+function mirrorRemoteFromDb(projectPath: string, dbUrl: string): { action: string; previousUrl?: string } {
+  const isRepo = (() => {
+    try {
+      const r = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: projectPath, encoding: 'buffer' });
+      return r.status === 0 && r.stdout.toString().trim() === 'true';
+    } catch {
+      return false;
+    }
+  })();
+  if (!isRepo) {
+    return { action: 'not_a_repo' };
+  }
+
+  const existing = (() => {
+    try {
+      const r = spawnSync('git', ['remote', 'get-url', 'origin'], { cwd: projectPath, encoding: 'buffer' });
+      return r.status === 0 ? r.stdout.toString().trim() || null : null;
+    } catch {
+      return null;
+    }
+  })();
+
+  if (existing === dbUrl) {
+    return { action: 'unchanged' };
+  }
+
+  if (existing) {
+    spawnSync('git', ['remote', 'set-url', 'origin', dbUrl], { cwd: projectPath, encoding: 'buffer' });
+    return { action: 'updated', previousUrl: existing };
+  }
+
+  spawnSync('git', ['remote', 'add', 'origin', dbUrl], { cwd: projectPath, encoding: 'buffer' });
+  return { action: 'add' };
+}
 
 router.post(
   '/:projectId/toggle-star',

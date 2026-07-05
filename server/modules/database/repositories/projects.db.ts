@@ -193,4 +193,39 @@ export const projectsDb = {
             WHERE project_id = ?
         `).run(projectId);
     },
+
+    /**
+     * Returns the project's GitHub remote URL stored in the `github_remote_url`
+     * column, or null if the project has no remote configured in the DB.
+     *
+     * This is the source of truth for "where should we push" — the Git panel's
+     * `git remote add origin <url>` is driven from this value, so updating it
+     * here re-points the project's remote without touching the local .git/config
+     * directly.
+     */
+    getGithubRemoteUrlById(projectId: string): string | null {
+        const db = getConnection();
+        const row = db.prepare(`
+            SELECT github_remote_url
+            FROM projects
+            WHERE project_id = ?
+        `).get(projectId) as { github_remote_url: string | null } | undefined;
+
+        if (!row || !row.github_remote_url) {
+            return null;
+        }
+
+        const trimmed = row.github_remote_url.trim();
+        return trimmed.length > 0 ? trimmed : null;
+    },
+
+    setGithubRemoteUrlById(projectId: string, githubRemoteUrl: string | null): void {
+        const db = getConnection();
+        const normalized = typeof githubRemoteUrl === 'string' ? githubRemoteUrl.trim() : '';
+        db.prepare(`
+            UPDATE projects
+            SET github_remote_url = ?
+            WHERE project_id = ?
+        `).run(normalized.length > 0 ? normalized : null, projectId);
+    },
 };

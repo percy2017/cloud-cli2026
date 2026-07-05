@@ -628,19 +628,94 @@ router.post('/init', async (req, res) => {
     try {
       const { stdout } = await spawnAsync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: projectPath });
       if (stdout.trim() === 'true') {
-        return res.json({ success: true, output: 'Already a git repository', alreadyInitialized: true });
+        // The directory is already a git repo — but the project might still be
+        // missing a remote. The DB's `github_remote_url` is the source of truth
+        // for "where should this project push to" (captured at clone time, or
+        // updated later via the wizard), so make sure the local repo matches it
+        // before declaring victory. This lets the user click "Initialize" again
+        // after editing the URL in the DB / wizard without re-cloning.
+        const remoteSetup = await ensureRemoteMatchesDb(project, projectPath);
+        return res.json({
+          success: true,
+          output: 'Already a git repository',
+          alreadyInitialized: true,
+          remote: remoteSetup,
+        });
       }
     } catch {
       // Not a repo yet — fall through and run `git init`.
     }
 
     const { stdout, stderr } = await spawnAsync('git', ['init'], { cwd: projectPath });
-    res.json({ success: true, output: (stdout || stderr || 'Repository initialized').trim() });
+    const remoteSetup = await ensureRemoteMatchesDb(project, projectPath);
+    res.json({
+      success: true,
+      output: (stdout || stderr || 'Repository initialized').trim(),
+      remote: remoteSetup,
+    });
   } catch (error) {
     console.error('Git init error:', error);
     res.status(500).json({ error: error.message });
   }
 });
+
+/**
+ * Reconciles the project's `origin` remote with `projects.github_remote_url`.
+ *
+ * - If the DB has a URL and the repo has no `origin` → run `git remote add origin <url>`.
+ * - If the DB has a URL and the repo's `origin` differs → run `git remote set-url origin <url>`
+ *   so the DB stays the source of truth (lets the user re-point the remote
+ *   without re-cloning).
+ * - If the DB has no URL → leave the repo alone (don't delete an existing remote
+ *   the user might have added manually).
+ *
+ * Returns a small object describing what happened, suitable for surfacing in
+ * the init response so the frontend can show "remote configured" feedback.
+ */
+async function ensureRemoteMatchesDb(projectId, projectPath) {
+  let dbUrl = null;
+  try {
+    dbUrl = projectsDb.getGithubRemoteUrlById(projectId);
+  } catch (lookupError) {
+    // The column may not exist yet on an older DB; treat that as "no URL" and
+    // skip remote setup instead of failing the whole init.
+    return { configured: false, skipped: true, reason: 'lookup_failed', error: lookupError.message };
+  }
+
+  if (!dbUrl) {
+    return { configured: false, skipped: true, reason: 'no_url_in_db' };
+  }
+
+  // Check existing origin URL.
+  let existingUrl = null;
+  try {
+    const { stdout } = await spawnAsync('git', ['remote', 'get-url', 'origin'], { cwd: projectPath });
+    existingUrl = stdout.trim() || null;
+  } catch {
+    // No origin configured (or `get-url` failed because remote doesn't exist).
+    existingUrl = null;
+  }
+
+  if (existingUrl === dbUrl) {
+    return { configured: true, url: dbUrl, action: 'unchanged' };
+  }
+
+  if (existingUrl) {
+    try {
+      await spawnAsync('git', ['remote', 'set-url', 'origin', dbUrl], { cwd: projectPath });
+      return { configured: true, url: dbUrl, action: 'updated', previousUrl: existingUrl };
+    } catch (error) {
+      return { configured: false, skipped: true, reason: 'set_url_failed', error: error.message };
+    }
+  }
+
+  try {
+    await spawnAsync('git', ['remote', 'add', 'origin', dbUrl], { cwd: projectPath });
+    return { configured: true, url: dbUrl, action: 'added' };
+  } catch (error) {
+    return { configured: false, skipped: true, reason: 'add_failed', error: error.message };
+  }
+}
 
 // Commit changes
 router.post('/commit', async (req, res) => {
@@ -1497,28 +1572,55 @@ router.post('/publish', async (req, res) => {
     }
   } catch (error) {
     console.error('Git publish error:', error);
-    
+
+    // Git writes different messages to stdout vs stderr depending on the failure
+    // mode — GitHub's pre-receive hooks (file-too-large, GH001, GH002, etc.) and
+    // network errors all land on stderr. Combine both so the patterns below can
+    // match either, then surface a useful 400 instead of a generic 500.
+    const stderrText = String(error?.stderr || '').trim();
+    const stdoutText = String(error?.stdout || '').trim();
+    const combined = `${error?.message || ''}\n${stderrText}\n${stdoutText}`.toLowerCase();
+
+    // GitHub's pre-receive hook rejects pushes with files over 100 MB. This is
+    // by far the most common "publish failed" we see, and the raw stderr is
+    // opaque without context — give the user a concrete pointer to which file
+    // and how to fix it.
+    const githubFileSizeMatch = combined.match(/file (.+?) is ([\d.]+)\s*([kmgt]?b); this exceeds github's file size limit of 100\.00\s*mb/i);
+    const gh001Match = /gh001|large files detected/i.test(combined);
+    if (githubFileSizeMatch || gh001Match) {
+      const offendingFile = githubFileSizeMatch ? githubFileSizeMatch[1] : null;
+      return res.status(400).json({
+        error: 'Push rejected: file exceeds GitHub\'s 100 MB limit',
+        details: offendingFile
+          ? `"${offendingFile}" is over GitHub's 100 MB per-file limit. Remove it from the next commit (e.g. \`git rm --cached "${offendingFile}"\` and add it to .gitignore) or use Git LFS.`
+          : 'A tracked file is over GitHub\'s 100 MB per-file limit. Remove it from the next commit and add it to .gitignore, or use Git LFS.',
+        ...(stderrText ? { stderr: stderrText.slice(0, 2000) } : {}),
+      });
+    }
+
     // Enhanced error handling for common publish scenarios
     let errorMessage = 'Publish failed';
     let details = error.message;
-    
-    if (error.message.includes('rejected')) {
+
+    if (combined.includes('rejected')) {
       errorMessage = 'Publish rejected';
       details = 'The remote branch already exists and has different commits. Use push instead.';
-    } else if (error.message.includes('Could not resolve hostname')) {
+    } else if (combined.includes('could not resolve hostname')) {
       errorMessage = 'Network error';
       details = 'Unable to connect to remote repository. Check your internet connection.';
-    } else if (error.message.includes('Permission denied')) {
+    } else if (combined.includes('permission denied') || combined.includes('authentication failed') || combined.includes('invalid username or password')) {
       errorMessage = 'Authentication failed';
       details = 'Permission denied. Check your credentials or SSH keys.';
-    } else if (error.message.includes('fatal:') && error.message.includes('does not appear to be a git repository')) {
+    } else if (combined.includes('fatal:') && combined.includes('does not appear to be a git repository')) {
       errorMessage = 'Remote not configured';
       details = 'Remote repository not properly configured. Check your remote URL.';
     }
-    
-    res.status(500).json({ 
-      error: errorMessage, 
-      details: details
+
+    res.status(500).json({
+      error: errorMessage,
+      details: details,
+      ...(stderrText ? { stderr: stderrText.slice(0, 2000) } : {}),
+      ...(stdoutText ? { stdout: stdoutText.slice(0, 2000) } : {}),
     });
   }
 });
