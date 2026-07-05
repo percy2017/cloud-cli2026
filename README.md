@@ -95,6 +95,128 @@ El wrapper `exec_interpreter` del config apunta a `process.env.NODE_BINARY || 'n
 
 El proceso se reinicia solo (`autorestart: true`) con backoff exponencial, hasta 10 restarts, hasta 512 MB de RSS — si pasa eso, queda caído y hay que ver los logs.
 
+## Deploy en otro VPS
+
+Cuatro pasos, copy-pasteables:
+
+**Pre-requisitos:** un VPS Linux con `git`, `curl`, build-essential (`apt install build-essential` o equivalente), Node 22 vía [nvm](https://github.com/nvm-sh/nvm) (`nvm install 22 && nvm use 22`), y `npm i -g pm2`. Abrí en el firewall del VPS el puerto que definas en `SERVER_PORT` del `.env` (cualquiera libre, no tiene que ser 3001).
+
+### Paso 1 — clonar
+
+```bash
+git clone https://github.com/percy2017/cloud-cli2026.git
+cd cloud-cli2026
+```
+
+### Paso 2 — `.env`
+
+```bash
+cp .env.example .env
+nano .env
+```
+
+Lo mínimo que tenés que ajustar:
+
+- `NODE_BINARY` — apuntá al binario de Node 22 si el sistema trae Node 24 por default. Ejemplo: `NODE_BINARY=/root/.nvm/versions/node/v22.x.x/bin/node`. Sin esto correcto, los binarios nativos (`better-sqlite3`, `node-pty`) crashean al `dlopen`.
+- `HOST` — `0.0.0.0` para escuchar en todas las interfaces, `127.0.0.1` para solo localhost (si vas a poner nginx adelante).
+- `DATABASE_PATH` — ruta absoluta persistente. Por default vive en `~/.cloudcli/auth.db`; en un VPS conviene `/home/<usuario>/.cloudcli/auth.db`.
+
+Ejemplo completo:
+
+```bash
+NODE_BINARY=/root/.nvm/versions/node/v22.11.0/bin/node
+HOST=0.0.0.0
+SERVER_PORT=8080                  # elegí el que tengas libre en el VPS
+DATABASE_PATH=/home/deploy/.cloudcli/auth.db
+CONTEXT_WINDOW=160000
+```
+
+`ecosystem.config.cjs` ya viene en el repo, no hay que tocarlo. Como detalle: este fork carga el `.env` de forma **inline** (líneas 1-25 abajo) porque el daemon de pm2 corre antes que el loader propio del server — sin ese loader, `NODE_BINARY` y compañía no llegarían al child process. Contenido completo del archivo:
+
+```js
+// Load .env from the same directory so NODE_BINARY (and friends) are picked up
+// before PM2 forks the app. Mirrors the loader in server/load-env.js but uses
+// a tiny inline parser because this file runs in the PM2 daemon, before the
+// app's own env-loading has executed.
+const path = require('path');
+const fs = require('fs');
+try {
+  const envPath = path.join(__dirname, '.env');
+  const raw = fs.readFileSync(envPath, 'utf8');
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eq = trimmed.indexOf('=');
+    if (eq === -1) continue;
+    const key = trimmed.slice(0, eq).trim();
+    if (!key || process.env[key] !== undefined) continue;
+    let value = trimmed.slice(eq + 1).trim();
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    process.env[key] = value;
+  }
+} catch {
+  // .env is optional
+}
+
+module.exports = {
+  apps: [
+    {
+      name: 'cloud-cli2026',
+      // Use Node 22 from /opt/node22 — native modules (better-sqlite3, node-pty)
+      // were rebuilt against the Node 22 ABI after `npm ci`, so the system Node 24
+      // cannot dlopen them. Overridable via NODE_BINARY in .env; falls back to
+      // "node" from PATH when unset.
+      exec_interpreter: process.env.NODE_BINARY || 'node',
+      script: 'dist-server/server/index.js',
+      cwd: __dirname,
+      instances: 1,
+      exec_mode: 'fork',
+      watch: false,
+
+      kill_timeout: 10000,
+      kill_signal: 'SIGTERM',
+
+      max_restarts: 10,
+      exp_backoff_restart_delay: 100,
+      autorestart: true,
+
+      max_memory_restart: '512M'
+    },
+  ],
+};
+```
+
+### Paso 3 — instalar y compilar
+
+```bash
+npm ci
+npm run build
+```
+
+`npm ci` deja las deps limpias; `npm run build` compila el frontend (`vite build` → `dist/`) y el backend (`tsc` → `dist-server/`).
+
+### Paso 4 — levantar con pm2
+
+```bash
+pm2 start ecosystem.config.cjs
+pm2 save
+pm2 startup     # seguí la instrucción que pm2 imprime para registrar el init script
+```
+
+El proceso queda como `cloud-cli2026` en la lista de pm2 y, gracias a `pm2 startup`, sobrevive reboots.
+
+### Verificación
+
+```bash
+pm2 status                              # cloud-cli2026 debe estar "online"
+pm2 logs cloud-cli2026 --lines 50       # buscar "listening" o la URL exacta
+curl -I http://localhost:<SERVER_PORT>/ # ajustá el puerto al que definiste en .env
+```
+
+Si el log muestra `Error: NODE_MODULE_VERSION mismatch` o `cannot dlopen`, casi siempre es `NODE_BINARY` apuntando al binario equivocado.
+
 ## Configuración
 
 Las variables reconocidas están en [`.env.example`](.env.example). Las más usadas:
