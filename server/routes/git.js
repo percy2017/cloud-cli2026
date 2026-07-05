@@ -1448,14 +1448,60 @@ router.post('/push', async (req, res) => {
 
     validateRemoteName(remoteName);
     validateBranchName(remoteBranch);
-    const { stdout } = await spawnAsync('git', ['push', remoteName, remoteBranch], { cwd: projectPath });
 
-    res.json({
-      success: true,
-      output: stdout || 'Push completed successfully',
-      remoteName,
-      remoteBranch
-    });
+    // For GitHub remotes, authenticate using the user's stored Personal Access
+    // Token from the credentials DB. We swap the remote URL temporarily to
+    // embed the token, then restore it in `finally`. Mirrors the logic in
+    // /publish so /push works without requiring a credential helper to be
+    // configured on the server.
+    let originalRemoteUrl = null;
+    try {
+      const { stdout: urlOutput } = await spawnAsync(
+        'git',
+        ['remote', 'get-url', remoteName],
+        { cwd: projectPath },
+      );
+      originalRemoteUrl = urlOutput.trim();
+      if (originalRemoteUrl.startsWith('https://github.com/')) {
+        const userId = req.user?.id;
+        const token = userId ? githubTokensDb.getActiveGithubToken(userId) : null;
+        if (token) {
+          const authedUrl = originalRemoteUrl.replace(
+            /^https:\/\/github\.com\//,
+            `https://${token}@github.com/`,
+          );
+          await spawnAsync(
+            'git',
+            ['remote', 'set-url', remoteName, authedUrl],
+            { cwd: projectPath },
+          );
+        }
+      }
+    } catch (urlError) {
+      // Couldn't read/replace remote URL — fall through and try the push with
+      // whatever auth the user already has configured (SSH key, credential
+      // helper, etc.).
+      console.warn(`Push: could not inspect remote URL for "${remoteName}":`, urlError.message);
+    }
+
+    try {
+      const { stdout } = await spawnAsync('git', ['push', remoteName, remoteBranch], { cwd: projectPath });
+
+      res.json({
+        success: true,
+        output: stdout || 'Push completed successfully',
+        remoteName,
+        remoteBranch
+      });
+    } finally {
+      if (originalRemoteUrl) {
+        await spawnAsync(
+          'git',
+          ['remote', 'set-url', remoteName, originalRemoteUrl],
+          { cwd: projectPath },
+        ).catch(() => {});
+      }
+    }
   } catch (error) {
     console.error('Git push error:', error);
     
