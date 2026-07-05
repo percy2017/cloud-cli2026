@@ -128,10 +128,6 @@ dev-debug.log
 *.sw?
 # OS specific
 
-# Task files
-tasks.json
-tasks/ 
-
 # Translations
 !src/i18n/locales/en/tasks.json
 !src/i18n/locales/fr/tasks.json
@@ -154,3 +150,7 @@ electron/*.tar.gz
 
 # Large binary artifacts
 *.zip
+
+# Task files
+# tasks.json
+# tasks/ 
