@@ -122,6 +122,10 @@
     "newFolder": "Nueva carpeta (Cmd+Shift+N)",
     "refresh": "Actualizar",
     "collapseAll": "Contraer todo",
+    "showHidden": "Mostrar archivos ocultos",
+    "hideHidden": "Ocultar archivos ocultos",
+    "showHiddenTitle": "Mostrar .git, .env y otros dotfiles en la raíz del proyecto",
+    "hideHiddenTitle": "Ocultar dotfiles (.git, .env, …) en la raíz del proyecto",
     "context": {
       "rename": "Renombrar",
       "delete": "Eliminar",

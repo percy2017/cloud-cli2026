@@ -3,13 +3,20 @@ import { api } from '../../../utils/api';
 import type { Project } from '../../../types/app';
 import type { FileTreeNode } from '../types/types';
 
+type UseFileTreeDataOptions = {
+  showHidden?: boolean;
+};
+
 type UseFileTreeDataResult = {
   files: FileTreeNode[];
   loading: boolean;
   refreshFiles: () => void;
 };
 
-export function useFileTreeData(selectedProject: Project | null): UseFileTreeDataResult {
+export function useFileTreeData(
+  selectedProject: Project | null,
+  options: UseFileTreeDataOptions = {}
+): UseFileTreeDataResult {
   const [files, setFiles] = useState<FileTreeNode[]>([]);
   const [loading, setLoading] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -44,7 +51,10 @@ export function useFileTreeData(selectedProject: Project | null): UseFileTreeDat
         setLoading(true);
       }
       try {
-        const response = await api.getFiles(projectId, { signal: abortControllerRef.current!.signal });
+        const response = await api.getFiles(projectId, {
+          signal: abortControllerRef.current!.signal,
+          showHidden: options.showHidden ?? false,
+        });
 
         if (!response.ok) {
           const errorText = await response.text();
@@ -81,7 +91,7 @@ export function useFileTreeData(selectedProject: Project | null): UseFileTreeDat
       isActive = false;
       abortControllerRef.current?.abort();
     };
-  }, [selectedProject?.projectId, refreshKey]);
+  }, [selectedProject?.projectId, refreshKey, options.showHidden]);
 
   return {
     files,

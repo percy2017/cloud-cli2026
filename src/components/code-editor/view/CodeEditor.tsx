@@ -20,6 +20,7 @@ import CodeEditorLoadingState from './subcomponents/CodeEditorLoadingState';
 import CodeEditorSurface from './subcomponents/CodeEditorSurface';
 import CodeEditorBinaryFile from './subcomponents/CodeEditorBinaryFile';
 import CodeEditorMediaPreview from './subcomponents/CodeEditorMediaPreview';
+import CodeEditorSqlitePreview from './subcomponents/CodeEditorSqlitePreview';
 
 type CodeEditorProps = {
   file: CodeEditorFile;
@@ -195,6 +196,17 @@ export default function CodeEditor({
 
   // Natively previewable media (image/pdf/audio/video) is rendered inline
   // instead of showing the generic "cannot be displayed" placeholder.
+  if (previewKind === 'sqlite') {
+    return (
+      <CodeEditorSqlitePreview
+        file={file}
+        projectId={fileProjectId}
+        isSidebar={isSidebar}
+        onClose={onClose}
+      />
+    );
+  }
+
   if (previewKind) {
     return (
       <CodeEditorMediaPreview

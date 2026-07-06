@@ -37,5 +37,21 @@
     "loading": "Loading preview...",
     "error": "Unable to display this file.",
     "openInNewTab": "Open in new tab"
+  },
+  "sqliteViewer": {
+    "loadingSchema": "Loading schema…",
+    "loadingRows": "Loading rows…",
+    "error": "Could not read this SQLite database",
+    "empty": "This table is empty",
+    "rowCount_one": "{{count}} row",
+    "rowCount_other": "{{count}} rows",
+    "pageOf": "Page {{page}} of {{totalPages}}",
+    "previousPage": "Previous",
+    "nextPage": "Next",
+    "schemaHeading": "Schema",
+    "tabsLabel": "Tables",
+    "truncatedBanner": "This database is larger than 50 MB; only the schema is available.",
+    "nullValue": "NULL",
+    "blobValue": "BLOB ({{bytes}} bytes)"
   }
 }

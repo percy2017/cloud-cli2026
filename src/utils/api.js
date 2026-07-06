@@ -147,8 +147,13 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ filePath, content }),
     }),
-  getFiles: (projectId, options = {}) =>
-    authenticatedFetch(`/api/projects/${projectId}/files`, options),
+  getFiles: (projectId, options = {}) => {
+    const params = new URLSearchParams();
+    if (options.showHidden) params.set('showHidden', 'true');
+    const queryString = params.toString();
+    const url = `/api/projects/${projectId}/files${queryString ? `?${queryString}` : ''}`;
+    return authenticatedFetch(url, { signal: options.signal });
+  },
 
   // File operations
   createFile: (projectId, { path, type, name }) =>

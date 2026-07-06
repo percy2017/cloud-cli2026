@@ -37,5 +37,21 @@
     "loading": "Cargando vista previa...",
     "error": "No se puede mostrar este archivo.",
     "openInNewTab": "Abrir en una nueva pestaña"
+  },
+  "sqliteViewer": {
+    "loadingSchema": "Cargando esquema…",
+    "loadingRows": "Cargando filas…",
+    "error": "No se pudo leer esta base de datos SQLite",
+    "empty": "Esta tabla está vacía",
+    "rowCount_one": "{{count}} fila",
+    "rowCount_other": "{{count}} filas",
+    "pageOf": "Página {{page}} de {{totalPages}}",
+    "previousPage": "Anterior",
+    "nextPage": "Siguiente",
+    "schemaHeading": "Esquema",
+    "tabsLabel": "Tablas",
+    "truncatedBanner": "Esta base de datos ocupa más de 50 MB; solo se muestra el esquema.",
+    "nullValue": "NULO",
+    "blobValue": "BLOB ({{bytes}} bytes)"
   }
 }

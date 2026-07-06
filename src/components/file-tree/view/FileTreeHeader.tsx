@@ -1,6 +1,6 @@
 import { useRef } from 'react';
 import type { ChangeEvent } from 'react';
-import { ChevronDown, Eye, FileText, FolderPlus, List, Loader2, RefreshCw, Search, TableProperties, Upload, X } from 'lucide-react';
+import { ChevronDown, Eye, EyeOff, FileText, FolderPlus, List, Loader2, RefreshCw, Rows3, Search, TableProperties, Upload, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { Button, Input } from '../../../shared/view/ui';
@@ -19,6 +19,9 @@ type FileTreeHeaderProps = {
   onUploadFiles?: (files: FileList) => void;
   onRefresh?: () => void;
   onCollapseAll?: () => void;
+  // Hidden-files toggle
+  showHidden?: boolean;
+  onToggleHidden?: () => void;
   // Loading state
   loading?: boolean;
   operationLoading?: boolean;
@@ -36,6 +39,8 @@ export default function FileTreeHeader({
   onUploadFiles,
   onRefresh,
   onCollapseAll,
+  showHidden,
+  onToggleHidden,
   loading,
   operationLoading,
   isUploading,
@@ -156,6 +161,31 @@ export default function FileTreeHeader({
           )}
           {/* Divider */}
           <div className="mx-0.5 h-4 w-px bg-border" />
+          {/* Hidden files toggle */}
+          {onToggleHidden && (
+            <Button
+              variant={showHidden ? 'default' : 'ghost'}
+              size="sm"
+              className="h-7 w-7 p-0"
+              onClick={onToggleHidden}
+              title={
+                showHidden
+                  ? t('fileTree.hideHiddenTitle', 'Hide dotfiles (.git, .env, …) at the project root')
+                  : t('fileTree.showHiddenTitle', 'Show .git, .env and other dotfiles at the project root')
+              }
+              aria-label={
+                showHidden
+                  ? t('fileTree.hideHidden', 'Hide hidden files')
+                  : t('fileTree.showHidden', 'Show hidden files')
+              }
+            >
+              {showHidden ? (
+                <EyeOff className="h-3.5 w-3.5" />
+              ) : (
+                <Eye className="h-3.5 w-3.5" />
+              )}
+            </Button>
+          )}
           {/* View mode buttons */}
           <Button
             variant={viewMode === 'simple' ? 'default' : 'ghost'}
@@ -175,7 +205,7 @@ export default function FileTreeHeader({
             title={t('fileTree.compactView')}
             aria-label={t('fileTree.compactView')}
           >
-            <Eye className="h-3.5 w-3.5" />
+            <Rows3 className="h-3.5 w-3.5" />
           </Button>
           <Button
             variant={viewMode === 'detailed' ? 'default' : 'ghost'}

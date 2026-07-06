@@ -6,6 +6,7 @@ import { cn } from '../../../lib/utils';
 import { ICON_SIZE_CLASS, getFileIconData } from '../constants/fileIcons';
 import { useExpandedDirectories } from '../hooks/useExpandedDirectories';
 import { useFileTreeData } from '../hooks/useFileTreeData';
+import { useFileTreeHidden } from '../hooks/useFileTreeHidden';
 import { useFileTreeOperations } from '../hooks/useFileTreeOperations';
 import { useFileTreeSearch } from '../hooks/useFileTreeSearch';
 import { useFileTreeViewMode } from '../hooks/useFileTreeViewMode';
@@ -48,8 +49,9 @@ export default function FileTree({ selectedProject, onFileOpen }: FileTreeProps)
     }
   }, [toast]);
 
-  const { files, loading, refreshFiles } = useFileTreeData(selectedProject);
+  const { showHidden, toggleShowHidden } = useFileTreeHidden();
   const { viewMode, changeViewMode } = useFileTreeViewMode();
+  const { files, loading, refreshFiles } = useFileTreeData(selectedProject, { showHidden });
   const { expandedDirs, toggleDirectory, expandDirectories, collapseAll } = useExpandedDirectories();
   const { searchQuery, setSearchQuery, filteredFiles } = useFileTreeSearch({
     files,
@@ -155,6 +157,8 @@ export default function FileTree({ selectedProject, onFileOpen }: FileTreeProps)
         onNewFolder={() => operations.handleStartCreate('', 'directory')}
         onRefresh={refreshFiles}
         onCollapseAll={collapseAll}
+        showHidden={showHidden}
+        onToggleHidden={toggleShowHidden}
         loading={loading}
         operationLoading={operationLoading}
         isUploading={upload.uploadProgress?.status === 'uploading'}

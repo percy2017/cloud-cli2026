@@ -95,6 +95,56 @@ export function validateManifest(manifest) {
 }
 
 const BUILD_TIMEOUT_MS = 60_000;
+const REBUILD_TIMEOUT_MS = 5 * 60_000;
+
+/**
+ * Run `npm rebuild` so native modules (e.g. node-pty) compile their bindings
+ * against the current Node ABI.
+ *
+ * `npm install --ignore-scripts` is used during plugin install for security
+ * (blocks arbitrary postinstall hooks), but that means node-gyp never runs and
+ * packages like node-pty ship without their `.node` binary. The plugin then
+ * crashes at runtime with "Cannot find module 'node-pty'". Rebuilding after
+ * install closes that gap without re-introducing the install-script risk —
+ * rebuild only compiles packages whose bindings are already declared.
+ */
+function runNpmRebuild(dir, onSuccess, onError) {
+  const rebuildProcess = spawn('npm', ['rebuild'], {
+    cwd: dir,
+    env: { ...process.env, NODE_ENV: 'development' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  let stderr = '';
+  let settled = false;
+
+  const timer = setTimeout(() => {
+    if (settled) return;
+    settled = true;
+    rebuildProcess.removeAllListeners();
+    rebuildProcess.kill();
+    onError(new Error('npm rebuild timed out'));
+  }, REBUILD_TIMEOUT_MS);
+
+  rebuildProcess.stderr.on('data', (data) => { stderr += data.toString(); });
+
+  rebuildProcess.on('close', (code) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    if (code !== 0) {
+      return onError(new Error(`npm rebuild failed (exit code ${code}): ${stderr.trim()}`));
+    }
+    onSuccess();
+  });
+
+  rebuildProcess.on('error', (err) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    onError(new Error(`Failed to spawn npm rebuild: ${err.message}`));
+  });
+}
 
 /** Run `npm run build` if the plugin's package.json declares a build script. */
 function runBuildIfNeeded(dir, packageJsonPath, onSuccess, onError) {
@@ -356,7 +406,11 @@ export function installPluginFromGit(url) {
             cleanupTemp();
             return reject(new Error(`npm install for ${repoName} failed (exit code ${npmCode})`));
           }
-          runBuildIfNeeded(tempDir, packageJsonPath, () => finalize(manifest), (err) => { cleanupTemp(); reject(err); });
+          // Compile native bindings (node-pty, better-sqlite3, etc.) before the
+          // build step runs, so TypeScript output can resolve them.
+          runNpmRebuild(tempDir, () => {
+            runBuildIfNeeded(tempDir, packageJsonPath, () => finalize(manifest), (err) => { cleanupTemp(); reject(err); });
+          }, (err) => { cleanupTemp(); reject(err); });
         });
 
         npmProcess.on('error', (err) => {
@@ -421,7 +475,9 @@ export function updatePluginFromGit(name) {
           if (npmCode !== 0) {
             return reject(new Error(`npm install for ${name} failed (exit code ${npmCode})`));
           }
-          runBuildIfNeeded(pluginDir, packageJsonPath, () => resolve(manifest), (err) => reject(err));
+          runNpmRebuild(pluginDir, () => {
+            runBuildIfNeeded(pluginDir, packageJsonPath, () => resolve(manifest), (err) => reject(err));
+          }, (err) => reject(err));
         });
         npmProcess.on('error', (err) => reject(err));
       } else {

@@ -2,8 +2,14 @@
 // them natively (images, PDFs, audio, video). For those we show an inline
 // preview instead of the generic "binary file" placeholder. Anything not listed
 // here (zip, exe, avi, mkv, fonts, ...) falls through to the binary message.
+//
+// 'sqlite' is a special kind: the browser can't render a .db file natively, but
+// we still route it to a dedicated viewer (`CodeEditorSqlitePreview`) instead of
+// the binary placeholder. It is intentionally absent from EXTENSION_MIME because
+// the SQLite viewer reads the file as JSON via the /api/.../sqlite/* endpoints
+// and doesn't use the streaming Content-Type pipeline.
 
-export type PreviewKind = 'image' | 'pdf' | 'video' | 'audio';
+export type PreviewKind = 'image' | 'pdf' | 'video' | 'audio' | 'sqlite';
 
 // Single source of truth: every extension the browser can preview, mapped to the
 // MIME type we apply when the server response has a missing/generic Content-Type.
@@ -42,6 +48,10 @@ const EXTENSION_MIME: Record<string, string> = {
   weba: 'audio/webm',
 };
 
+// SQLite files have their own viewer; we don't pretend the browser can render
+// them. The list is small enough to keep inline rather than reusing EXTENSION_MIME.
+const SQLITE_EXTENSIONS = new Set(['db', 'sqlite', 'sqlite3']);
+
 const extensionOf = (filename: string): string => filename.split('.').pop()?.toLowerCase() ?? '';
 
 const kindForMime = (mime: string): PreviewKind | null => {
@@ -53,11 +63,14 @@ const kindForMime = (mime: string): PreviewKind | null => {
 };
 
 export const getPreviewKind = (filename: string): PreviewKind | null => {
-  const mime = EXTENSION_MIME[extensionOf(filename)];
+  const ext = extensionOf(filename);
+  if (SQLITE_EXTENSIONS.has(ext)) return 'sqlite';
+  const mime = EXTENSION_MIME[ext];
   return mime ? kindForMime(mime) : null;
 };
 
 // MIME type to fall back to when the server returns no/generic Content-Type.
-// Returns undefined for non-previewable extensions.
+// Returns undefined for non-previewable extensions (including .db — those go
+// through CodeEditorSqlitePreview, which fetches JSON, not bytes).
 export const getPreviewMimeType = (filename: string): string | undefined =>
   EXTENSION_MIME[extensionOf(filename)];

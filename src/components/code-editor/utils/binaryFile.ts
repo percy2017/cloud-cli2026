@@ -1,4 +1,7 @@
 // Binary file extensions (images are handled by ImageViewer, not here)
+// Note: 'db' / 'sqlite' / 'sqlite3' are NOT here — the SQLite viewer
+// (`CodeEditorSqlitePreview`) handles them and routes via the 'sqlite'
+// PreviewKind in previewableFile.ts.
 const BINARY_EXTENSIONS = [
   // Archives
   'zip', 'tar', 'gz', 'rar', '7z', 'bz2', 'xz',
@@ -10,8 +13,6 @@ const BINARY_EXTENSIONS = [
   'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp',
   // Fonts
   'ttf', 'otf', 'woff', 'woff2', 'eot',
-  // Database
-  'db', 'sqlite', 'sqlite3',
   // Other binary
   'bin', 'dat', 'iso', 'img', 'class', 'jar', 'war', 'pyc', 'pyo'
 ];

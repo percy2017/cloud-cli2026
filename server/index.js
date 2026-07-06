@@ -71,6 +71,7 @@ import tasksMcpRoutes from './modules/tasks/tasks-mcp.routes.js';
 import { tasksService } from './modules/tasks/tasks.service.js';
 import { startEnabledPluginServers, stopAllPlugins, getPluginPort } from './utils/plugin-process-manager.js';
 import { initializeDatabase, projectsDb, sessionsDb } from './modules/database/index.js';
+import { inspectSqliteFile, readSqliteTableRows, SqliteInspectorError } from './modules/sqlite/index.js';
 import { configureWebPush } from './services/vapid-keys.js';
 import { validateApiKey, authenticateToken, authenticateWebSocket } from './middleware/auth.js';
 import { IS_PLATFORM } from './constants/config.js';
@@ -566,6 +567,72 @@ app.get('/api/projects/:projectId/files/content', authenticateToken, async (req,
     }
 });
 
+// ── SQLite inspector ─────────────────────────────────────────────────────────
+// Read-only browsing of .db / .sqlite / .sqlite3 files in the project tree.
+// The two endpoints below are thin wrappers around inspectSqliteFile() and
+// readSqliteTableRows(); they only add project-root validation and
+// auth (already mounted at the router level) before delegating.
+
+async function resolveSqliteProjectFile(req, res) {
+    const { projectId } = req.params;
+    const { path: filePath } = req.query;
+    if (!filePath) {
+        res.status(400).json({ error: 'Invalid file path' });
+        return null;
+    }
+    const projectRoot = await projectsDb.getProjectPathById(projectId);
+    if (!projectRoot) {
+        res.status(404).json({ error: 'Project not found' });
+        return null;
+    }
+    const resolved = path.isAbsolute(filePath)
+        ? path.resolve(filePath)
+        : path.resolve(projectRoot, filePath);
+    const normalizedRoot = path.resolve(projectRoot) + path.sep;
+    if (!resolved.startsWith(normalizedRoot)) {
+        res.status(403).json({ error: 'Path must be under project root' });
+        return null;
+    }
+    return resolved;
+}
+
+function handleSqliteError(error, res) {
+    if (error instanceof SqliteInspectorError) {
+        return res.status(error.statusCode).json({ error: error.message, code: error.code });
+    }
+    console.error('SQLite inspector error:', error);
+    return res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+}
+
+app.get('/api/projects/:projectId/sqlite/inspect', authenticateToken, async (req, res) => {
+    try {
+        const resolved = await resolveSqliteProjectFile(req, res);
+        if (!resolved) return;
+        const result = await inspectSqliteFile(resolved);
+        res.json(result);
+    } catch (error) {
+        handleSqliteError(error, res);
+    }
+});
+
+app.get(
+    '/api/projects/:projectId/sqlite/tables/:tableName/rows',
+    authenticateToken,
+    async (req, res) => {
+        try {
+            const resolved = await resolveSqliteProjectFile(req, res);
+            if (!resolved) return;
+            const { tableName } = req.params;
+            const page = Number.parseInt(req.query.page, 10) || 1;
+            const pageSize = Number.parseInt(req.query.pageSize, 10) || 0;
+            const result = await readSqliteTableRows(resolved, tableName, page, pageSize);
+            res.json(result);
+        } catch (error) {
+            handleSqliteError(error, res);
+        }
+    }
+);
+
 // Save file content endpoint
 app.put('/api/projects/:projectId/file', authenticateToken, async (req, res) => {
     try {
@@ -636,7 +703,15 @@ app.get('/api/projects/:projectId/files', authenticateToken, async (req, res) =>
             return res.status(404).json({ error: `Project path not found: ${actualPath}` });
         }
 
-        const files = await getFileTree(actualPath, 10, 0, true);
+        // `showHidden` opts into dot-directories like .git, .svn that would
+        // otherwise be hidden; `depth` is bounded to [1, 15] to keep large
+        // project trees responsive.
+        const showHidden = req.query.showHidden === 'true';
+        const depth = Math.min(
+            15,
+            Math.max(1, Number.parseInt(req.query.depth, 10) || 10)
+        );
+        const files = await getFileTree(actualPath, depth, 0, showHidden);
         res.json(files);
     } catch (error) {
         console.error('[ERROR] File tree error:', error.message);
@@ -1562,14 +1637,19 @@ function permToRwx(perm) {
 const IGNORED_DIRS = new Set([
     // JS / TS toolchains
     'node_modules', 'dist', 'build', '.next', '.nuxt', '.cache', '.parcel-cache',
-    // VCS
-    '.git', '.svn', '.hg',
     // Python
     '__pycache__', '.pytest_cache', '.mypy_cache', '.tox', 'venv', '.venv',
     // Rust / Go / Java / Ruby
     'target', 'vendor',
     // Build output / IDE
     '.gradle', '.idea', 'coverage', '.nyc_output'
+]);
+
+// VCS metadata directories that ship with most projects. Skipped by default
+// because `.git/objects` and friends are usually not what the user is browsing
+// — but the Files UI exposes a `showHidden` toggle that opts back into them.
+const HIDDEN_DIRS = new Set([
+    '.git', '.svn', '.hg',
 ]);
 
 const DEFAULT_FS_CONCURRENCY = 64;
@@ -1619,7 +1699,20 @@ async function getFileTree(dirPath, maxDepth = 3, currentDepth = 0, showHidden =
         return [];
     }
 
-    const filteredEntries = entries.filter((entry) => !(entry.isDirectory() && IGNORED_DIRS.has(entry.name)));
+    // Two-tier filter:
+    //   IGNORED_DIRS — always skipped (node_modules, dist, build, …) regardless
+    //     of `showHidden` because they have no useful project structure and
+    //     bloat traversal on big monorepos.
+    //   HIDDEN_DIRS — skipped by default (.git, .svn, .hg); surfaced when the
+    //     Files UI opts in via `showHidden=true`.
+    // Files (not directories) starting with `.` (e.g. `.env`, `.gitignore`)
+    // are never blocked by either set so they show up either way.
+    const filteredEntries = entries.filter((entry) => {
+        if (!entry.isDirectory()) return true;
+        if (IGNORED_DIRS.has(entry.name)) return false;
+        if (!showHidden && HIDDEN_DIRS.has(entry.name)) return false;
+        return true;
+    });
 
     // Process every entry in parallel. On high-latency filesystems (NFS/SMB)
     // serial stat() was the real bottleneck — issuing them concurrently lets

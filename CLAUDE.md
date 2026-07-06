@@ -22,6 +22,8 @@ Requires Node.js 22+ (`.nvmrc` pins `v22`). Use npm — `package.json` declares 
 - `npm run desktop:dist:mac` / `:win` — produce signed desktop installers via `electron-builder`. `npm run desktop:pack` produces an unpacked dir build.
 - `npm run server:bundle` — build + run `scripts/release/build-server-bundle.js` for the npm tarball.
 - `npm run release` — interactive release via `release-it` + `@release-it/conventional-changelog` (requires `GITHUB_TOKEN`).
+- `node scripts/fix-node-pty.js` — postinstall for the **server's own** `node-pty` (macOS spawn-helper perms). Runs automatically via `postinstall`.
+- `node scripts/fix-plugin-native-modules.js` — recompile native bindings (`node-pty`, `better-sqlite3`, etc.) for installed plugins under `~/.claude-code-ui/plugins/*`. Run after a Node upgrade or when a plugin crashes with "Cannot find module 'node-pty'". Accepts an optional plugin dir name (`… web-terminal`) and `--dry-run`. The install/update flows in `server/utils/plugin-loader.js` already call `npm rebuild` automatically — this script is the manual escape hatch for plugins installed before that fix.
 
 ### Tests
 
@@ -115,6 +117,8 @@ Docker sandbox is an opt-in CLI command (`cloudcli sandbox ...`); it is not part
 ### Plugins are external processes
 
 Plugins install via Settings → Plugins and are launched as separate Node processes; the backend reaches them via `utils/plugin-process-manager.js#getPluginPort` and the `/plugin-ws/:pluginName` proxy. The reference starter plugin lives at `plugins/starter/`.
+
+**Native bindings.** Plugin installs use `npm install --ignore-scripts` for safety, which skips `node-gyp` for native deps like `node-pty`. `server/utils/plugin-loader.js#runNpmRebuild` runs `npm rebuild` right after install/update so those bindings exist by the time the plugin subprocess boots. If you see `Cannot find module 'node-pty'` (or similar) in `cloud-cli2026-error-*.log`, the binary is missing for the current Node ABI — fix it with `node scripts/fix-plugin-native-modules.js` (or pass the plugin dir name to scope it).
 
 ### i18n: Spanish is the default; no hardcoded English UI
 
