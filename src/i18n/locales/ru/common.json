@@ -235,5 +235,6 @@
       "updateAvailable": "Доступно обновление",
       "closeSidebar": "Закрыть боковую панель"
     }
-  }
+  },
+  "openSource": "CloudCLI — это открытый исходный код"
 }

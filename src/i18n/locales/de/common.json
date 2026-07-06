@@ -235,5 +235,6 @@
       "updateAvailable": "Update verfügbar",
       "closeSidebar": "Seitenleiste schließen"
     }
-  }
+  },
+  "openSource": "CloudCLI ist Open Source"
 }

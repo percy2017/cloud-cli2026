@@ -265,5 +265,6 @@
       "updateAvailable": "Güncelleme mevcut",
       "closeSidebar": "Kenar çubuğunu kapat"
     }
-  }
+  },
+  "openSource": "CloudCLI açık kaynaklıdır"
 }

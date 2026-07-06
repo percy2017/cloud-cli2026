@@ -265,5 +265,6 @@
       "updateAvailable": "有可用更新",
       "closeSidebar": "关闭侧边栏"
     }
-  }
+  },
+  "openSource": "CloudCLI 是开源的"
 }
