@@ -1,3 +1,5 @@
+import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 
 import { projectsDb, sessionsDb } from '@/modules/database/index.js';
@@ -44,6 +46,34 @@ type ChatRun = {
  * example when the browser tab was asleep while the run completed).
  */
 const COMPLETED_RUN_RETENTION_MS = 5 * 60 * 1000;
+
+// Sidecar file consumed by the cloudcli-browser stdio MCP server. Writing it
+// on run start lets the MCP inject chatRunId into every tool call so the HTTP
+// bridge can auto-manage a per-run BrowserUseSession. Read-before-delete on
+// cleanup avoids clobbering a newer run when the previous run crashed silently.
+const BROWSER_USE_SIDECAR_DIR = path.join(process.env.HOME || os.homedir(), '.cloudcli', 'browser-use');
+const BROWSER_USE_SIDECAR_FILE = path.join(BROWSER_USE_SIDECAR_DIR, 'current-chat-run.json');
+
+async function writeBrowserUseSidecar(chatRunId: string, userId: string | number | null): Promise<void> {
+  await fs.mkdir(BROWSER_USE_SIDECAR_DIR, { recursive: true });
+  await fs.writeFile(
+    BROWSER_USE_SIDECAR_FILE,
+    JSON.stringify({ chatRunId, userId, updatedAt: new Date().toISOString() }, null, 2),
+    'utf8',
+  );
+}
+
+async function clearBrowserUseSidecar(chatRunId: string): Promise<void> {
+  try {
+    const raw = await fs.readFile(BROWSER_USE_SIDECAR_FILE, 'utf8');
+    const parsed = JSON.parse(raw) as { chatRunId?: unknown };
+    if (parsed.chatRunId === chatRunId) {
+      await fs.unlink(BROWSER_USE_SIDECAR_FILE).catch(() => undefined);
+    }
+  } catch {
+    // File missing — nothing to clear.
+  }
+}
 
 /**
  * Upper bound on buffered events per run so a very long tool-heavy run cannot
@@ -245,6 +275,16 @@ export const chatRunRegistry = {
     });
 
     runs.set(input.appSessionId, run);
+
+    // Publish the active chat run to the stdio MCP server so its tool calls
+    // are scoped to this run. Fire-and-forget — the sidecar is best-effort.
+    void writeBrowserUseSidecar(input.appSessionId, input.userId).catch((error) => {
+      console.error('[ChatRunRegistry] Failed to write browser-use sidecar', {
+        appSessionId: input.appSessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+
     return run;
   },
 
@@ -316,6 +356,20 @@ export const chatRunRegistry = {
     }
 
     run.writer.sendComplete(opts);
+
+    // Detach the stdio MCP server from this run and close any auto-managed
+    // browser sessions owned by it. Dynamic import avoids the load-order
+    // cycle that would come from statically importing browserUseService here.
+    void clearBrowserUseSidecar(appSessionId).catch(() => undefined);
+    void (async () => {
+      const { browserUseService } = await import('@/modules/browser-use/index.js');
+      await browserUseService.closeSessionsByChatRunId(appSessionId).catch((error) => {
+        console.error('[ChatRunRegistry] Failed to close browser sessions', {
+          appSessionId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    })();
   },
 
   /**

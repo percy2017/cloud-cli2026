@@ -188,7 +188,10 @@ export type GatewayEventKind =
   | 'chat_subscribed'
   | 'session_upserted'
   | 'loading_progress'
-  | 'protocol_error';
+  | 'protocol_error'
+  | 'browser_use_session_created'
+  | 'browser_use_session_updated'
+  | 'browser_use_session_closed';
 
 /**
  * Complete set of `kind` values emitted to websocket clients.

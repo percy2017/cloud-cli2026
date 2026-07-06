@@ -17,6 +17,7 @@ import {
 
 import { cn } from '../../../lib/utils';
 import { Badge, Button } from '../../../shared/view/ui';
+import { useWebSocket } from '../../../contexts/WebSocketContext';
 import { authenticatedFetch } from '../../../utils/api';
 import type { SettingsMainTab } from '../../settings/types/types';
 
@@ -51,6 +52,7 @@ type BrowserUseSession = {
     y: number;
     actor: 'agent';
   } | null;
+  chatRunId?: string | null;
 };
 
 type BrowserUsePanelProps = {
@@ -187,6 +189,41 @@ export default function BrowserUsePanel({ isVisible, onShowSettings }: BrowserUs
     if (!isVisible) return;
     void refresh();
   }, [isVisible, refresh]);
+
+  // Live updates: subscribe to browser_use_session_* gateway events so the
+  // panel mirrors the agent's browser without manual refresh. Reconnect
+  // triggers a catch-up refresh via the synthetic websocket_reconnected kind.
+  const { subscribe } = useWebSocket();
+  useEffect(() => {
+    return subscribe((event) => {
+      const kind = event.kind;
+      if (kind === 'browser_use_session_created' || kind === 'browser_use_session_updated') {
+        const raw = (event as { session?: unknown }).session;
+        if (!raw || typeof raw !== 'object') {
+          return;
+        }
+        const session = raw as BrowserUseSession;
+        setSessions((prev) => {
+          const without = prev.filter((s) => s.id !== session.id);
+          return [...without, session];
+        });
+        setSelectedSessionId((current) => current || session.id);
+        return;
+      }
+      if (kind === 'browser_use_session_closed') {
+        const sessionId = (event as { sessionId?: unknown }).sessionId;
+        if (typeof sessionId !== 'string') {
+          return;
+        }
+        setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+        setSelectedSessionId((current) => (current === sessionId ? null : current));
+        return;
+      }
+      if (kind === 'websocket_reconnected') {
+        void refresh();
+      }
+    });
+  }, [subscribe, refresh]);
 
   const runAction = useCallback(async (action: () => Promise<void>) => {
     setIsBusy(true);

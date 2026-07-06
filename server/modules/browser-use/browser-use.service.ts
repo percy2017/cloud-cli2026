@@ -8,6 +8,7 @@ import path from 'node:path';
 import { appConfigDb } from '@/modules/database/index.js';
 import { providerMcpService } from '@/modules/providers/index.js';
 import { getModuleDir } from '@/utils/runtime-paths.js';
+import { WS_OPEN_STATE, connectedClients } from '@/modules/websocket/index.js';
 
 const require = createRequire(import.meta.url);
 const __dirname = getModuleDir(import.meta.url);
@@ -23,6 +24,7 @@ type BrowserUseSessionStatus = 'ready' | 'stopped' | 'unavailable';
 type BrowserUseSession = {
   id: string;
   ownerId: string;
+  chatRunId: string | null;
   createdBy: 'agent';
   runtime: BrowserUseRuntime;
   status: BrowserUseSessionStatus;
@@ -47,6 +49,11 @@ type BrowserUseSession = {
 
 type PublicBrowserUseSession = Omit<BrowserUseSession, 'ownerId'>;
 
+type BroadcastSessionEvent =
+  | { kind: 'browser_use_session_created'; session: PublicBrowserUseSession }
+  | { kind: 'browser_use_session_updated'; session: PublicBrowserUseSession }
+  | { kind: 'browser_use_session_closed'; sessionId: string; chatRunId: string | null };
+
 type RuntimeHandle = {
   browser?: any;
   context?: any;
@@ -70,6 +77,7 @@ type RuntimeProbe = Omit<RuntimeReadiness, 'installInProgress' | 'installMessage
 
 const sessions = new Map<string, BrowserUseSession>();
 const handles = new Map<string, RuntimeHandle>();
+const sessionsByChatRunId = new Map<string, string>();
 let installPromise: Promise<{ success: boolean; message: string }> | null = null;
 let lastInstallMessage: string | null = null;
 let runtimeProbeCache: { value: RuntimeProbe; updatedAt: number } | null = null;
@@ -79,9 +87,20 @@ const DEFAULT_SETTINGS: BrowserUseSettings = {
 };
 const AGENT_OWNER_ID = 'agent';
 const PROFILE_ROOT = path.join(os.homedir(), '.cloudcli', 'browser-use', 'profiles');
+const SIDECAR_DIR = path.join(os.homedir(), '.cloudcli', 'browser-use');
+const SIDECAR_FILE = path.join(SIDECAR_DIR, 'current-chat-run.json');
 const MCP_SERVER_NAME = 'cloudcli-browser';
 const LEGACY_MCP_SERVER_NAMES = ['cloudcli-browser-use'];
 const RUNTIME_READINESS_CACHE_TTL_MS = 30_000;
+
+function broadcastSessionChange(event: BroadcastSessionEvent): void {
+  const msg = JSON.stringify(event);
+  connectedClients.forEach((client) => {
+    if (client.readyState === WS_OPEN_STATE) {
+      client.send(msg);
+    }
+  });
+}
 
 function getRuntime(): BrowserUseRuntime {
   return IS_PLATFORM ? 'cloud' : 'local';
@@ -511,6 +530,7 @@ export const browserUseService = {
     const session: BrowserUseSession = {
       id: randomUUID(),
       ownerId: AGENT_OWNER_ID,
+      chatRunId: null,
       createdBy: 'agent',
       runtime: getRuntime(),
       status: 'unavailable',
@@ -567,7 +587,9 @@ export const browserUseService = {
     sessions.set(session.id, session);
     handles.set(session.id, { browser, context, page });
     await captureSession(session, page);
-    return publicSession(session);
+    const pub = publicSession(session);
+    broadcastSessionChange({ kind: 'browser_use_session_created', session: pub });
+    return pub;
   },
 
   async listAgentSessions() {
@@ -579,6 +601,61 @@ export const browserUseService = {
     return [...sessions.values()]
       .filter((session) => session.ownerId === AGENT_OWNER_ID)
       .map(publicSession);
+  },
+
+  async getOrCreateSessionForChatRun(input: {
+    chatRunId: string;
+    userId: string | number | null;
+    profileName?: string | null;
+  }): Promise<PublicBrowserUseSession> {
+    const existingId = sessionsByChatRunId.get(input.chatRunId);
+    if (existingId) {
+      const existing = sessions.get(existingId);
+      if (existing) {
+        return publicSession(existing);
+      }
+      // dangling map entry — fall through to recreate
+      sessionsByChatRunId.delete(input.chatRunId);
+    }
+
+    const created = await this.createAgentSession({ profileName: input.profileName ?? null });
+    const session = sessions.get(created.id);
+    if (!session) {
+      // createAgentSession should always set the session, but guard against the impossible.
+      return created;
+    }
+    session.chatRunId = input.chatRunId;
+    sessionsByChatRunId.set(input.chatRunId, session.id);
+    return publicSession(session);
+  },
+
+  async getSessionByChatRunId(chatRunId: string): Promise<PublicBrowserUseSession | null> {
+    const id = sessionsByChatRunId.get(chatRunId);
+    if (!id) {
+      return null;
+    }
+    const session = sessions.get(id);
+    if (!session) {
+      sessionsByChatRunId.delete(chatRunId);
+      return null;
+    }
+    return publicSession(session);
+  },
+
+  async closeSessionsByChatRunId(chatRunId: string): Promise<{ closed: number }> {
+    const id = sessionsByChatRunId.get(chatRunId);
+    sessionsByChatRunId.delete(chatRunId);
+    if (!id) {
+      return { closed: 0 };
+    }
+    const session = sessions.get(id);
+    if (session) {
+      broadcastSessionChange({ kind: 'browser_use_session_closed', sessionId: id, chatRunId });
+      await closeHandle(id);
+      sessions.delete(id);
+      return { closed: 1 };
+    }
+    return { closed: 0 };
   },
 
   async getAgentSession(sessionId: string) {
@@ -616,6 +693,7 @@ export const browserUseService = {
     session.lastAction = `navigate:${url}`;
     session.cursor = null;
     await captureSession(session, handle.page);
+    broadcastSessionChange({ kind: 'browser_use_session_updated', session: publicSession(session) });
     return publicSession(session);
   },
 
@@ -627,6 +705,7 @@ export const browserUseService = {
     }
     await captureSession(session, handle.page);
     const text = await handle.page.locator('body').innerText({ timeout: 5_000 }).catch(() => '');
+    broadcastSessionChange({ kind: 'browser_use_session_updated', session: publicSession(session) });
     return {
       session: publicSession(session),
       text: text.slice(0, 30_000),
@@ -654,6 +733,7 @@ export const browserUseService = {
     session.lastAction = 'click';
     session.cursor = point ? { ...point, actor: 'agent' } : null;
     await captureSession(session, handle.page);
+    broadcastSessionChange({ kind: 'browser_use_session_updated', session: publicSession(session) });
     return publicSession(session);
   },
 
@@ -678,6 +758,7 @@ export const browserUseService = {
 
     session.lastAction = 'type';
     await captureSession(session, handle.page);
+    broadcastSessionChange({ kind: 'browser_use_session_updated', session: publicSession(session) });
     return publicSession(session);
   },
 
@@ -697,6 +778,7 @@ export const browserUseService = {
       ));
     }
     await captureSession(session, handle.page);
+    broadcastSessionChange({ kind: 'browser_use_session_updated', session: publicSession(session) });
     return publicSession(session);
   },
 
@@ -709,6 +791,7 @@ export const browserUseService = {
     await handle.page.keyboard.press(key);
     session.lastAction = `press_key:${key}`;
     await captureSession(session, handle.page);
+    broadcastSessionChange({ kind: 'browser_use_session_updated', session: publicSession(session) });
     return publicSession(session);
   },
 
@@ -724,6 +807,7 @@ export const browserUseService = {
       point ? { ...point, actor: 'agent' as const } : null
     ));
     await captureSession(session, handle.page);
+    broadcastSessionChange({ kind: 'browser_use_session_updated', session: publicSession(session) });
     return publicSession(session);
   },
 
@@ -743,6 +827,7 @@ export const browserUseService = {
     }
     session.lastAction = 'wait_for';
     await captureSession(session, handle.page);
+    broadcastSessionChange({ kind: 'browser_use_session_updated', session: publicSession(session) });
     return publicSession(session);
   },
 
@@ -776,6 +861,7 @@ export const browserUseService = {
     }
     const updatedHandle = handles.get(sessionId);
     await captureSession(session, updatedHandle?.page || handle.page);
+    broadcastSessionChange({ kind: 'browser_use_session_updated', session: publicSession(session) });
     return {
       session: publicSession(session),
       tabs: handle.context.pages().map((page: any, index: number) => ({
@@ -798,7 +884,9 @@ export const browserUseService = {
     session.updatedAt = new Date().toISOString();
     session.lastAction = 'stop';
     session.message = 'Browser session stopped. Create a new session to continue browsing.';
-    return { stopped: true, session: publicSession(session) };
+    const pub = publicSession(session);
+    broadcastSessionChange({ kind: 'browser_use_session_updated', session: pub });
+    return { stopped: true, session: pub };
   },
 
   async deleteSession(sessionId: string) {
@@ -807,8 +895,13 @@ export const browserUseService = {
       return { deleted: false };
     }
 
+    const chatRunId = session.chatRunId;
+    if (chatRunId) {
+      sessionsByChatRunId.delete(chatRunId);
+    }
     await closeHandle(sessionId);
     sessions.delete(sessionId);
+    broadcastSessionChange({ kind: 'browser_use_session_closed', sessionId, chatRunId });
     return { deleted: true, sessionId };
   },
 
@@ -819,15 +912,18 @@ export const browserUseService = {
 
   async stopAllSessions() {
     await Promise.all([...sessions.keys()].map(async (sessionId) => {
-      await closeHandle(sessionId);
       const session = sessions.get(sessionId);
+      const chatRunId = session?.chatRunId ?? null;
+      await closeHandle(sessionId);
       if (session) {
         session.status = 'stopped';
         session.updatedAt = new Date().toISOString();
         session.lastAction = 'shutdown';
         session.message = 'Browser session stopped during server shutdown.';
+        broadcastSessionChange({ kind: 'browser_use_session_closed', sessionId, chatRunId });
       }
     }));
+    sessionsByChatRunId.clear();
   },
 };
 

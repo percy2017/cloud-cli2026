@@ -26,8 +26,23 @@ router.post('/tools/:toolName', async (req, res) => {
   try {
     const input = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, unknown>;
     const sessionId = typeof input.sessionId === 'string' ? input.sessionId : '';
+    const rawChatRunId = typeof input.chatRunId === 'string' ? input.chatRunId.trim() : '';
+    const chatRunId = rawChatRunId || null;
     const toolName = req.params.toolName;
     let result: unknown;
+
+    // When chatRunId is present (auto-managed mode), the service resolves or
+    // creates the session for this run. The explicit sessionId from the agent
+    // is only honored when chatRunId is absent, preserving backward compat.
+    let resolvedSessionId = sessionId;
+    if (chatRunId) {
+      const resolved = await browserUseService.getOrCreateSessionForChatRun({
+        chatRunId,
+        userId: null,
+        profileName: typeof input.profileName === 'string' ? input.profileName : null,
+      });
+      resolvedSessionId = resolved.id;
+    }
 
     switch (toolName) {
       case 'browser_create_session':
@@ -40,13 +55,13 @@ router.post('/tools/:toolName', async (req, res) => {
         break;
       case 'browser_snapshot':
       case 'browser_take_screenshot':
-        result = await browserUseService.agentSnapshot(sessionId);
+        result = await browserUseService.agentSnapshot(resolvedSessionId);
         break;
       case 'browser_navigate':
-        result = await browserUseService.agentNavigate(sessionId, String(input.url || ''));
+        result = await browserUseService.agentNavigate(resolvedSessionId, String(input.url || ''));
         break;
       case 'browser_click':
-        result = await browserUseService.agentClick(sessionId, {
+        result = await browserUseService.agentClick(resolvedSessionId, {
           selector: typeof input.selector === 'string' ? input.selector : undefined,
           text: typeof input.text === 'string' ? input.text : undefined,
           x: typeof input.x === 'number' ? input.x : undefined,
@@ -54,7 +69,7 @@ router.post('/tools/:toolName', async (req, res) => {
         });
         break;
       case 'browser_type':
-        result = await browserUseService.agentType(sessionId, {
+        result = await browserUseService.agentType(resolvedSessionId, {
           selector: typeof input.selector === 'string' ? input.selector : undefined,
           text: String(input.text || ''),
           submit: input.submit === true,
@@ -62,7 +77,7 @@ router.post('/tools/:toolName', async (req, res) => {
         break;
       case 'browser_fill_form':
         result = await browserUseService.agentFillForm(
-          sessionId,
+          resolvedSessionId,
           Array.isArray(input.fields)
             ? input.fields.map((field) => {
               const record = field as Record<string, unknown>;
@@ -75,24 +90,24 @@ router.post('/tools/:toolName', async (req, res) => {
         );
         break;
       case 'browser_press_key':
-        result = await browserUseService.agentPressKey(sessionId, String(input.key || ''));
+        result = await browserUseService.agentPressKey(resolvedSessionId, String(input.key || ''));
         break;
       case 'browser_select_option':
         result = await browserUseService.agentSelectOption(
-          sessionId,
+          resolvedSessionId,
           String(input.selector || ''),
           Array.isArray(input.values) ? input.values.filter((value): value is string => typeof value === 'string') : [],
         );
         break;
       case 'browser_wait_for':
-        result = await browserUseService.agentWaitFor(sessionId, {
+        result = await browserUseService.agentWaitFor(resolvedSessionId, {
           text: typeof input.text === 'string' ? input.text : undefined,
           url: typeof input.url === 'string' ? input.url : undefined,
           timeoutMs: typeof input.timeoutMs === 'number' ? input.timeoutMs : undefined,
         });
         break;
       case 'browser_tabs':
-        result = await browserUseService.agentTabs(sessionId, {
+        result = await browserUseService.agentTabs(resolvedSessionId, {
           action: input.action === 'new' || input.action === 'select' || input.action === 'close' || input.action === 'list'
             ? input.action
             : undefined,
@@ -101,7 +116,11 @@ router.post('/tools/:toolName', async (req, res) => {
         });
         break;
       case 'browser_close_session':
-        result = await browserUseService.agentStopSession(sessionId);
+        if (chatRunId) {
+          result = await browserUseService.closeSessionsByChatRunId(chatRunId);
+        } else {
+          result = await browserUseService.agentStopSession(resolvedSessionId);
+        }
         break;
       default:
         res.status(404).json({ success: false, error: `Unknown Browser MCP tool "${toolName}".` });

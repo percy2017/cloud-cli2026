@@ -546,7 +546,112 @@ export const TOOL_CONFIGS: Record<string, ToolDisplayConfig> = {
         format: 'plain'
       })
     }
-  }
+  },
+
+  // ============================================================================
+  // Browser-use MCP tools (per-chat-run browser sessions)
+  // ============================================================================
+
+  browser_navigate: {
+    input: {
+      type: 'one-line',
+      getValue: (input: Record<string, unknown>) => String(input.url || ''),
+      getSecondary: () => 'Navigate',
+    },
+    result: { hideOnSuccess: true, type: 'special' },
+  },
+  browser_click: {
+    input: {
+      type: 'one-line',
+      getValue: (input: Record<string, unknown>) =>
+        String(input.text || input.selector || (typeof input.x === 'number' && typeof input.y === 'number'
+          ? `(${input.x}, ${input.y})`
+          : 'Click')),
+    },
+    result: { hideOnSuccess: true, type: 'special' },
+  },
+  browser_type: {
+    input: {
+      type: 'one-line',
+      getValue: (input: Record<string, unknown>) => {
+        const text = String(input.text || '');
+        const clipped = text.length > 60 ? `${text.slice(0, 60)}…` : text;
+        return `"${clipped}"`;
+      },
+      getSecondary: (input: Record<string, unknown>) =>
+        typeof input.selector === 'string' && input.selector ? `into ${input.selector}` : undefined,
+    },
+    result: { hideOnSuccess: true, type: 'special' },
+  },
+  browser_fill_form: {
+    input: {
+      type: 'collapsible',
+      title: (input: Record<string, unknown>) =>
+        `Fill form (${Array.isArray(input.fields) ? input.fields.length : 0} fields)`,
+      defaultOpen: false,
+      contentType: 'text',
+      getContentProps: (input: Record<string, unknown>) => ({
+        content: JSON.stringify(input.fields || [], null, 2),
+        format: 'code',
+      }),
+    },
+    result: { hideOnSuccess: true, type: 'special' },
+  },
+  browser_press_key: {
+    input: {
+      type: 'one-line',
+      getValue: (input: Record<string, unknown>) => `Press ${String(input.key || '')}`,
+    },
+    result: { hideOnSuccess: true, type: 'special' },
+  },
+  browser_select_option: {
+    input: {
+      type: 'one-line',
+      getValue: (input: Record<string, unknown>) =>
+        Array.isArray(input.values) ? input.values.join(', ') : '',
+      getSecondary: (input: Record<string, unknown>) =>
+        typeof input.selector === 'string' ? input.selector : undefined,
+    },
+    result: { hideOnSuccess: true, type: 'special' },
+  },
+  browser_wait_for: {
+    input: {
+      type: 'one-line',
+      getValue: (input: Record<string, unknown>) =>
+        String(input.text || input.url || `${input.timeoutMs || 5000}ms`),
+    },
+    result: { hideOnSuccess: true, type: 'special' },
+  },
+  browser_tabs: {
+    input: {
+      type: 'one-line',
+      getValue: (input: Record<string, unknown>) =>
+        `${String(input.action || 'list')}${typeof input.index === 'number' ? ` #${input.index}` : ''}`,
+      getSecondary: (input: Record<string, unknown>) =>
+        typeof input.url === 'string' ? input.url : undefined,
+    },
+    result: { hideOnSuccess: true, type: 'special' },
+  },
+  browser_snapshot: {
+    input: { type: 'hidden' },
+    result: { hidden: true },
+  },
+  browser_take_screenshot: {
+    input: { type: 'hidden' },
+    result: { hidden: true },
+  },
+  browser_create_session: {
+    input: { type: 'one-line', getValue: () => 'Create browser session' },
+    result: { hidden: true },
+  },
+  browser_list_sessions: {
+    input: { type: 'one-line', getValue: () => 'List browser sessions' },
+    result: { hidden: true },
+  },
+  browser_close_session: {
+    input: { type: 'one-line', getValue: () => 'Close browser session' },
+    result: { hidden: true },
+  },
 };
 
 /**

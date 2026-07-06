@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 import './load-env.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 type JsonRpcRequest = {
   jsonrpc: '2.0';
@@ -37,18 +40,53 @@ const apiUrl = (process.env.CLOUDCLI_BROWSER_USE_API_URL || 'http://127.0.0.1:30
 const apiToken = process.env.CLOUDCLI_BROWSER_USE_MCP_TOKEN || '';
 const API_TIMEOUT_MS = Number.parseInt(process.env.CLOUDCLI_BROWSER_USE_API_TIMEOUT_MS || '60000', 10);
 
+// Sidecar file written by chat-run-registry on every chat run start. Reading it
+// lets this stdio MCP server know which chat run is currently driving the agent
+// and inject chatRunId into every tool call, so the HTTP bridge can auto-manage
+// a per-run BrowserUseSession.
+const SIDECAR_FILE = path.join(process.env.HOME || os.homedir(), '.cloudcli', 'browser-use', 'current-chat-run.json');
+const SIDECAR_CACHE_MS = 1000;
+let sidecarCache: { value: string | null; readAt: number } = { value: null, readAt: 0 };
+
+async function readCurrentChatRunId(): Promise<string | null> {
+  const now = Date.now();
+  if (now - sidecarCache.readAt < SIDECAR_CACHE_MS) {
+    return sidecarCache.value;
+  }
+  try {
+    const raw = await fs.promises.readFile(SIDECAR_FILE, 'utf8');
+    const parsed = JSON.parse(raw) as { chatRunId?: unknown };
+    sidecarCache = {
+      value: typeof parsed.chatRunId === 'string' ? parsed.chatRunId : null,
+      readAt: now,
+    };
+  } catch {
+    sidecarCache = { value: null, readAt: now };
+  }
+  return sidecarCache.value;
+}
+
+async function withChatRunId(args: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const chatRunId = await readCurrentChatRunId();
+  if (!chatRunId) {
+    return args;
+  }
+  return { ...args, chatRunId };
+}
+
 async function callBrowserUseApi(toolName: string, input: Record<string, unknown>) {
   if (!apiToken) {
     throw new Error('CLOUDCLI_BROWSER_USE_MCP_TOKEN is not configured.');
   }
 
+  const enrichedInput = await withChatRunId(input);
   const response = await fetch(`${apiUrl}/tools/${encodeURIComponent(toolName)}`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiToken}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify(input),
+    body: JSON.stringify(enrichedInput),
     signal: AbortSignal.timeout(API_TIMEOUT_MS),
   });
   const data = await response.json() as { success?: boolean; data?: unknown; error?: string };
