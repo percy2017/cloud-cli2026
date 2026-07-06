@@ -68,7 +68,7 @@ export default function AboutTab() {
             )}
           </div>
           <p className="mt-0.5 text-sm text-muted-foreground">
-            Open-source AI coding assistant interface
+            {t('aboutTab.tagline')}
           </p>
         </div>
       </div>
@@ -82,7 +82,7 @@ export default function AboutTab() {
       >
         <GitHubIcon className="h-4 w-4" />
         <Star className="h-3.5 w-3.5" />
-        <span>Star on GitHub</span>
+        <span>{t('aboutTab.starOnGithub')}</span>
       </a>
 
       {/* Links */}
@@ -94,7 +94,7 @@ export default function AboutTab() {
           className="flex items-center gap-1.5 text-muted-foreground transition-colors hover:text-foreground"
         >
           <GitHubIcon className="h-4 w-4" />
-          GitHub
+          {t('aboutTab.links.github')}
         </a>
         <a
           href={DISCORD_URL}
@@ -103,7 +103,7 @@ export default function AboutTab() {
           className="flex items-center gap-1.5 text-muted-foreground transition-colors hover:text-foreground"
         >
           <DiscordIcon className="h-4 w-4" />
-          Discord
+          {t('aboutTab.links.discord')}
         </a>
         <a
           href={DOCS_URL}
@@ -112,7 +112,7 @@ export default function AboutTab() {
           className="flex items-center gap-1.5 text-muted-foreground transition-colors hover:text-foreground"
         >
           <ExternalLink className="h-3.5 w-3.5" />
-          Docs
+          {t('aboutTab.links.docs')}
         </a>
         <a
           href={CLOUDCLI_URL}
@@ -128,9 +128,9 @@ export default function AboutTab() {
       {/* Hosted CTA (OSS mode only) */}
       {!IS_PLATFORM && (
         <div className="rounded-xl border border-primary/10 bg-primary/5 p-4">
-          <h4 className="text-sm font-medium text-foreground">Try CloudCLI Hosted</h4>
+          <h4 className="text-sm font-medium text-foreground">{t('aboutTab.tryHosted.title')}</h4>
           <p className="mt-1 text-xs text-muted-foreground">
-            Team collaboration, shared MCP configs, settings sync across environments, and managed infrastructure.
+            {t('aboutTab.tryHosted.description')}
           </p>
           <a
             href={CLOUDCLI_URL}
@@ -138,7 +138,7 @@ export default function AboutTab() {
             rel="noopener noreferrer"
             className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-primary transition-colors hover:underline"
           >
-            Learn more
+            {t('aboutTab.tryHosted.learnMore')}
             <ExternalLink className="h-3 w-3" />
           </a>
         </div>
@@ -147,16 +147,18 @@ export default function AboutTab() {
       {/* Premium feature placeholders (OSS mode only) */}
       {!IS_PLATFORM && (
         <div className="space-y-4 border-t border-border/50 pt-6">
-          <h3 className="text-sm font-medium text-foreground">CloudCLI Pro Features</h3>
+          <h3 className="text-sm font-medium text-foreground">{t('aboutTab.proFeatures.title')}</h3>
           <PremiumFeatureCard
             icon={<Cloud className="h-5 w-5" />}
-            title="Sync Settings"
-            description="Keep your preferences, MCP configs, and theme in sync across all your environments."
+            title={t('aboutTab.proFeatures.syncSettings.title')}
+            description={t('aboutTab.proFeatures.syncSettings.description')}
+            ctaText={t('aboutTab.proFeatures.availableWith')}
           />
           <PremiumFeatureCard
             icon={<Users className="h-5 w-5" />}
-            title="Team Management"
-            description="Multiple users, role-based access, and shared projects for your team."
+            title={t('aboutTab.proFeatures.teamManagement.title')}
+            description={t('aboutTab.proFeatures.teamManagement.description')}
+            ctaText={t('aboutTab.proFeatures.availableWith')}
           />
         </div>
       )}
@@ -164,7 +166,7 @@ export default function AboutTab() {
       {/* License */}
       <div className="border-t border-border/50 pt-4">
         <p className="text-xs text-muted-foreground/60">
-          Licensed under AGPL-3.0
+          {t('aboutTab.licensedUnder')}
         </p>
       </div>
     </div>
