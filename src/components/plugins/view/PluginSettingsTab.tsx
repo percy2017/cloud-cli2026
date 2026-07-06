@@ -207,6 +207,23 @@ function PluginCard({
     ? 'bg-emerald-500'
     : 'bg-muted-foreground/20';
 
+  // If this plugin matches one of our curated recommendations, prefer the
+  // translated display name and description from `pluginSettings.<key>.*`
+  // over the raw values in the plugin's manifest.json. This keeps the UI
+  // localized for the plugins we ship even though third-party manifests
+  // still hardcode English strings.
+  const matchingRecommendation = [...OFFICIAL_PLUGIN_RECOMMENDATIONS, ...UNOFFICIAL_PLUGIN_RECOMMENDATIONS]
+    .find((recommendation) => pluginMatchesRecommendation(plugin, recommendation));
+  const translationKey = matchingRecommendation?.translationKey;
+  const localizedDisplayName = translationKey ? t(`pluginSettings.${translationKey}.name`) : null;
+  const localizedDescription = translationKey ? t(`pluginSettings.${translationKey}.description`) : null;
+  const displayName = localizedDisplayName && localizedDisplayName !== `pluginSettings.${translationKey}.name`
+    ? localizedDisplayName
+    : plugin.displayName;
+  const description = localizedDescription && localizedDescription !== `pluginSettings.${translationKey}.description`
+    ? localizedDescription
+    : plugin.description;
+
   return (
     <div
       className="relative flex overflow-hidden rounded-lg border border-border bg-card transition-opacity duration-200"
@@ -232,7 +249,7 @@ function PluginCard({
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm font-semibold leading-none text-foreground">
-                  {plugin.displayName}
+                  {displayName}
                 </span>
                 <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
                   v{plugin.version}
@@ -242,9 +259,9 @@ function PluginCard({
                 </span>
                 <ServerDot running={!!plugin.serverRunning} t={t} />
               </div>
-              {plugin.description && (
+              {description && (
                 <p className="mt-1 text-sm leading-snug text-muted-foreground">
-                  {plugin.description}
+                  {description}
                 </p>
               )}
               <div className="mt-1 flex items-center gap-3">
@@ -298,7 +315,7 @@ function PluginCard({
               <Trash2 className="h-3.5 w-3.5" />
             </button>
 
-            <ToggleSwitch checked={plugin.enabled} onChange={onToggle} ariaLabel={`${plugin.enabled ? t('pluginSettings.disable') : t('pluginSettings.enable')} ${plugin.displayName}`} />
+            <ToggleSwitch checked={plugin.enabled} onChange={onToggle} ariaLabel={`${plugin.enabled ? t('pluginSettings.disable') : t('pluginSettings.enable')} ${displayName}`} />
           </div>
         </div>
 
@@ -306,7 +323,7 @@ function PluginCard({
         {confirmingUninstall && (
           <div className="mt-3 flex items-center justify-between gap-3 rounded border border-red-200 bg-red-50 px-3 py-2 dark:border-red-800/50 dark:bg-red-950/30">
             <span className="text-sm text-red-600 dark:text-red-400">
-              {t('pluginSettings.confirmUninstallMessage', { name: plugin.displayName })}
+              {t('pluginSettings.confirmUninstallMessage', { name: displayName })}
             </span>
             <div className="flex gap-1.5">
               <button
