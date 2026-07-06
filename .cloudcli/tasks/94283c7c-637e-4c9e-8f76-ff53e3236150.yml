@@ -1,0 +1,239 @@
+id: 94283c7c-637e-4c9e-8f76-ff53e3236150
+projectId: 39cf558b-d63c-4f8d-b1cf-aa7e205af22d
+agent: researcher
+title: Resumir el repositorio QwenLM/qwen-code
+description: >-
+  Investigar el repo público QwenLM/qwen-code en GitHub y producir un resumen ejecutivo cubriendo propósito, stack,
+  arquitectura, features clave y estado del proyecto.
+prompt: >-
+  Tu trabajo es producir un resumen del repositorio público de GitHub: https://github.com/QwenLM/qwen-code
+
+
+  Pasos sugeridos:
+
+  1. Usá WebFetch sobre la página principal del repo y el README crudo
+  (https://raw.githubusercontent.com/QwenLM/qwen-code/main/README.md o la rama que detectes como default).
+
+  2. Si la info es insuficiente, complementá con WebSearch (queries como 'qwen-code architecture', 'qwen code features',
+  'qwen-code release', etc.).
+
+  3. Devolvé un resumen en markdown con estas secciones:
+     - **Qué es y para quién** — propósito del proyecto, audiencia objetivo.
+     - **Stack / tecnologías** — lenguajes principales, frameworks, integraciones con LLM (Qwen API, etc.).
+     - **Estructura** — organización de carpetas relevante (solo la que ayude a entender el proyecto).
+     - **Features clave** — bullets con funcionalidades distintivas.
+     - **Estado del proyecto** — estrellas aproximadas, último release / commit relevante, licencia, issues abiertos si los hay.
+     - **Comparación** (si aplica) — cómo se posiciona frente a alternativas tipo Claude Code, Gemini CLI, Codex CLI, etc.
+     - **Fuentes** — lista de URLs consultadas.
+
+  Importante: NO clones el repo ni ejecutes nada — es solo lectura. El markdown va como `result` al completar la tarea.
+taskType: research
+riskLevel: low
+priority: normal
+contextRefs: []
+history:
+  - at: '2026-07-06T07:27:22.189Z'
+    actor: mcp:chat-run:418f0fcd-11f3-421b-bcbb-2fdeae8521bb
+    role: agent
+    action: created
+    status: in_progress
+  - at: '2026-07-06T07:27:22.189Z'
+    actor: mcp:chat-run:418f0fcd-11f3-421b-bcbb-2fdeae8521bb
+    role: agent
+    action: status_changed
+    note: Auto-approved on create (orchestrator path).
+    status: in_progress
+    fromStatus: submitted
+  - at: '2026-07-06T07:28:02.282Z'
+    actor: mcp:chat-run:418f0fcd-11f3-421b-bcbb-2fdeae8521bb
+    role: agent
+    action: status_changed
+    status: completed
+    fromStatus: in_progress
+status: completed
+quarantined: false
+createdAt: '2026-07-06T07:27:22.189Z'
+updatedAt: '2026-07-06T07:28:02.282Z'
+startedAt: '2026-07-06T07:27:22.189Z'
+completedAt: '2026-07-06T07:28:02.282Z'
+result: >-
+  # Resumen del repositorio `QwenLM/qwen-code`
+
+
+  ## Qué es y para quién
+
+
+  **Qwen Code** es un agente de coding en terminal open-source. Nació como fork de `Google Gemini CLI v0.8.2` pero desde
+  `v0.1` se independizó del upstream y se convirtió en un framework agéntico multi-protocolo y multi-plataforma con
+  integraciones profundas a los modelos Qwen.
+
+
+  - **Audiencia objetivo:** developers que quieran una herramienta de coding agéntica con soporte multi-modelo,
+  interfaces en terminal / IDE / desktop / IM y extensibilidad vía SDKs, MCP, hooks y sub-agents.
+
+
+  ## Stack / tecnologías
+
+
+  - **TypeScript:** 81.3% (el grueso del código)
+
+  - **C:** 5.8%
+
+  - **Rust:** 5.7%
+
+  - **JavaScript:** 3.9%
+
+  - **Python:** 1.1%
+
+  - **CSS:** 0.6%
+
+  - El resto: misc (1.6%)
+
+
+  ## Estructura relevante
+
+
+  Top-level layout (lo más importante para entender el proyecto):
+
+
+  | Path | Para qué |
+
+  |---|---|
+
+  | `packages/` | Sub-paquetes. Incluye `sdk-typescript`, `sdk-python`, `sdk-java` |
+
+  | `integration-tests/` | Suites de integración |
+
+  | `docs-site/` / `docs/` | Sitio de docs y docs sueltos |
+
+  | `eslint-rules/` | Reglas custom de ESLint |
+
+  | `scripts/` | Build scripts y utilidades |
+
+  | `patches/` | Parches a dependencias/upstream |
+
+  | `.qwen/` | Configuración y skills de Qwen Code (incl. `qwen-code-claw`) |
+
+  | `.github/`, `.husky/`, `.vscode/` | Config de tooling |
+
+
+  Archivos top-level destacados: `AGENTS.md`, `CLAUDE.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `Dockerfile`, `LICENSE`,
+  `Makefile`, `package.json`, `tsconfig.json`, `vitest.config.ts`.
+
+
+  ## Features clave
+
+
+  - **Agentic defaults:** Auto-Memory, Auto-Skills, SubAgents, Agent Teams, MCP, dynamic workflows
+
+  - **Multi-protocol:** APIs OpenAI, Anthropic, Gemini y Qwen; third-party providers; modelos locales (Ollama, vLLM)
+
+  - **Multi-platform:**
+    - Terminal UI (`qwen`)
+    - Plugins IDE (VS Code, Zed, JetBrains)
+    - Desktop app (macOS / Windows / Linux)
+    - Daemon mode (`qwen serve` — multi-cliente vía HTTP + SSE)
+    - SDKs (TypeScript, Python, Java)
+    - IM bots (Telegram, DingTalk, WeChat, Feishu)
+  - **Built-in skills:** `/review`, `/batch`, `/loop`, `/bugfix`
+
+  - **Diferenciadores vs Claude Code:**
+    1. Open-source tanto el modelo como el framework
+    2. Multi-protocol real (no atado a un vendor)
+    3. Agent Arena
+    4. Daemon mode multi-cliente
+    5. IM channels integrados
+  - **Self-iterating:** el propio agente se usa para fileear issues, mandar PRs, revisar código y correr tests
+
+
+  ## Modos de uso
+
+
+  | Modo | Entry | Caso de uso |
+
+  |---|---|---|
+
+  | Interactive | `qwen` | TUI con rich rendering |
+
+  | Headless | `qwen -p "..."` | Scripts, CI/CD, batch |
+
+  | IDE | — | VS Code, Zed, JetBrains |
+
+  | Desktop | — | GUI multiplataforma |
+
+  | Daemon | `qwen serve` | Agente compartido vía HTTP+SSE |
+
+  | SDK | — | TS / Python / Java |
+
+  | IM Bot | `qwen channel` | Telegram, DingTalk, WeChat, Feishu |
+
+
+  ## Instalación
+
+
+  - **Linux / macOS:** `curl -fsSL
+  https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen-standalone.sh | bash`
+
+  - **Windows:** PowerShell one-liner del mismo host
+
+  - **NPM:** `npm install -g @qwen-code/qwen-code@latest` (requiere Node.js 22+)
+
+  - **Homebrew:** `brew install qwen-code`
+
+
+  ## Estado del proyecto
+
+
+  - **Stars:** 25.8k
+
+  - **Forks:** 2.6k
+
+  - **Watchers:** 137
+
+  - **Open issues:** 534
+
+  - **Open PRs:** 87
+
+  - **Releases:** 520 — último `v0.19.6` publicado el **3 de julio de 2026**
+
+  - **Commits en `main`:** 6,971
+
+  - **Default branch:** `main`
+
+  - **License:** Apache-2.0
+
+
+  Proyecto muy activo (release cadence sostenido, comunidad grande). Los 534 issues / 87 PRs abiertos son señal de
+  engagement real, no abandono.
+
+
+  ## Comparación con alternativas
+
+
+  | Dimensión | Qwen Code | Claude Code | Gemini CLI | Codex CLI |
+
+  |---|---|---|---|---|
+
+  | Modelo | Multi-protocol (Qwen, OpenAI, Anthropic, Gemini, local) | Anthropic | Gemini | OpenAI |
+
+  | Open-source | Sí (modelo + framework) | No (producto cerrado) | Sí (fork origen) | No |
+
+  | Agent Teams / Arena | Sí | No (al momento) | No | No |
+
+  | Daemon multi-cliente | Sí (`qwen serve`) | No | No | No |
+
+  | IM bots integrados | Sí (Telegram, DingTalk, WeChat, Feishu) | No | No | No |
+
+  | Self-iterating agent | Sí | Parcial | No | No |
+
+
+  > Qwen Code es el más "framework" del segmento — pensado no solo como CLI sino como plataforma extensible para
+  construir agentes de coding sobre múltiples modelos.
+
+
+  ## Fuentes
+
+
+  - [QwenLM/qwen-code — página del repo](https://github.com/QwenLM/qwen-code)
+error: null
+createdBy: mcp:chat-run:418f0fcd-11f3-421b-bcbb-2fdeae8521bb

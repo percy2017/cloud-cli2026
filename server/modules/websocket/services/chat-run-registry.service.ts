@@ -32,6 +32,9 @@ type ChatRun = {
   appSessionId: string;
   provider: LLMProvider;
   providerSessionId: string | null;
+  /** DB-assigned project id for the chat session, used by the cloudcli-tasks
+   *  sidecar to scope agent-side task creation to a single project. */
+  projectId: string | null;
   status: ChatRunStatus;
   lastSeq: number;
   events: NormalizedMessage[];
@@ -69,6 +72,50 @@ async function clearBrowserUseSidecar(chatRunId: string): Promise<void> {
     const parsed = JSON.parse(raw) as { chatRunId?: unknown };
     if (parsed.chatRunId === chatRunId) {
       await fs.unlink(BROWSER_USE_SIDECAR_FILE).catch(() => undefined);
+    }
+  } catch {
+    // File missing — nothing to clear.
+  }
+}
+
+// Parallel sidecar for the cloudcli-tasks MCP. Tasks are pure-data so there is
+// no per-run session lifecycle to manage — the sidecar only tells the stdio MCP
+// which chat run is currently driving the agent so tool calls can be correlated.
+// We also stamp the DB-assigned projectId so the bridge can route new tasks to
+// the correct per-project queue directory.
+const TASKS_SIDECAR_DIR = path.join(process.env.HOME || os.homedir(), '.cloudcli', 'tasks');
+const TASKS_SIDECAR_FILE = path.join(TASKS_SIDECAR_DIR, 'current-chat-run.json');
+
+async function writeTasksSidecar(
+  chatRunId: string,
+  userId: string | number | null,
+  projectId: string | null,
+  provider: LLMProvider,
+): Promise<void> {
+  await fs.mkdir(TASKS_SIDECAR_DIR, { recursive: true });
+  await fs.writeFile(
+    TASKS_SIDECAR_FILE,
+    JSON.stringify(
+      {
+        chatRunId,
+        userId,
+        projectId,
+        provider,
+        updatedAt: new Date().toISOString(),
+      },
+      null,
+      2,
+    ),
+    'utf8',
+  );
+}
+
+async function clearTasksSidecar(chatRunId: string): Promise<void> {
+  try {
+    const raw = await fs.readFile(TASKS_SIDECAR_FILE, 'utf8');
+    const parsed = JSON.parse(raw) as { chatRunId?: unknown };
+    if (parsed.chatRunId === chatRunId) {
+      await fs.unlink(TASKS_SIDECAR_FILE).catch(() => undefined);
     }
   } catch {
     // File missing — nothing to clear.
@@ -245,6 +292,7 @@ export const chatRunRegistry = {
     providerSessionId: string | null;
     connection: RealtimeClientConnection;
     userId: string | number | null;
+    projectId?: string | null;
   }): ChatRun | null {
     const existing = runs.get(input.appSessionId);
     if (existing && existing.status === 'running') {
@@ -255,6 +303,7 @@ export const chatRunRegistry = {
       appSessionId: input.appSessionId,
       provider: input.provider,
       providerSessionId: input.providerSessionId,
+      projectId: input.projectId ?? null,
       status: 'running',
       lastSeq: 0,
       events: [],
@@ -280,6 +329,12 @@ export const chatRunRegistry = {
     // are scoped to this run. Fire-and-forget — the sidecar is best-effort.
     void writeBrowserUseSidecar(input.appSessionId, input.userId).catch((error) => {
       console.error('[ChatRunRegistry] Failed to write browser-use sidecar', {
+        appSessionId: input.appSessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+    void writeTasksSidecar(input.appSessionId, input.userId, run.projectId, input.provider).catch((error) => {
+      console.error('[ChatRunRegistry] Failed to write tasks sidecar', {
         appSessionId: input.appSessionId,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -361,6 +416,7 @@ export const chatRunRegistry = {
     // browser sessions owned by it. Dynamic import avoids the load-order
     // cycle that would come from statically importing browserUseService here.
     void clearBrowserUseSidecar(appSessionId).catch(() => undefined);
+    void clearTasksSidecar(appSessionId).catch(() => undefined);
     void (async () => {
       const { browserUseService } = await import('@/modules/browser-use/index.js');
       await browserUseService.closeSessionsByChatRunId(appSessionId).catch((error) => {

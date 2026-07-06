@@ -9,6 +9,7 @@
  *   start         - Start the server
  *   sandbox       - Manage Docker sandbox environments
  *   browser-use-mcp - Run Browser MCP stdio server
+ *   tasks-mcp       - Run Tasks MCP stdio server
  *   status        - Show configuration and data locations
  *   help          - Show help information
  *   version       - Show version information
@@ -158,6 +159,7 @@ Commands:
   start            Start the CloudCLI server (default)
   sandbox          Manage Docker sandbox environments
   browser-use-mcp  Run the Browser MCP stdio server
+  tasks-mcp        Run the Tasks MCP stdio server
   status           Show configuration and data locations
   update           Update to the latest version
   help             Show this help information
@@ -611,6 +613,10 @@ async function startBrowserUseMcp() {
     await import('./browser-use-mcp.js');
 }
 
+async function startTasksMcp() {
+    await import('./tasks-mcp.js');
+}
+
 // Parse CLI arguments
 function parseArgs(args) {
     const parsed = { command: 'start', options: {} };
@@ -666,6 +672,9 @@ async function main() {
             break;
         case 'browser-use-mcp':
             await startBrowserUseMcp();
+            break;
+        case 'tasks-mcp':
+            await startTasksMcp();
             break;
         case 'status':
         case 'info':

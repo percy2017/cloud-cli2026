@@ -66,6 +66,9 @@ import voiceRoutes from './voice-proxy.js';
 import browserUseRoutes from './modules/browser-use/browser-use.routes.js';
 import browserUseMcpRoutes from './modules/browser-use/browser-use-mcp.routes.js';
 import { browserUseService } from './modules/browser-use/browser-use.service.js';
+import tasksRoutes from './modules/tasks/tasks.routes.js';
+import tasksMcpRoutes from './modules/tasks/tasks-mcp.routes.js';
+import { tasksService } from './modules/tasks/tasks.service.js';
 import { startEnabledPluginServers, stopAllPlugins, getPluginPort } from './utils/plugin-process-manager.js';
 import { initializeDatabase, projectsDb, sessionsDb } from './modules/database/index.js';
 import { configureWebPush } from './services/vapid-keys.js';
@@ -219,6 +222,12 @@ app.use('/api/browser-use-mcp', browserUseMcpRoutes);
 
 // Browser API Routes (protected)
 app.use('/api/browser-use', authenticateToken, browserUseRoutes);
+
+// Tasks MCP bridge API (local token protected)
+app.use('/api/tasks-mcp', tasksMcpRoutes);
+
+// Tasks API Routes (protected)
+app.use('/api/tasks', authenticateToken, tasksRoutes);
 
 // Unified provider MCP routes (protected)
 app.use('/api/providers', authenticateToken, providerRoutes);
@@ -1775,6 +1784,11 @@ async function startServer() {
                 await browserUseService.stopAllSessions();
             } catch (err) {
                 console.error('[Browser] Error stopping sessions during shutdown:', err?.message || err);
+            }
+            try {
+                tasksService.stopAll();
+            } catch (err) {
+                console.error('[Tasks] Error stopping tasks service during shutdown:', err?.message || err);
             }
             try {
                 await stopAllPlugins();

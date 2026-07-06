@@ -1,0 +1,92 @@
+{
+  "title": "Cola de tareas",
+  "description": "Cola de tareas nativa. Los agentes archivan tareas en la cola del proyecto activo y la pestaña del encabezado las muestra con estado en vivo, historial y acciones del operador.",
+  "enableLabel": "Habilitar cola de tareas nativa",
+  "enableDescription": "Registra el MCP cloudcli-tasks en todos los proveedores para que cualquier agente pueda archivar tareas, actualizar su estado, aprobar, cancelar o poner en cuarentena elementos de la cola del proyecto en el que está trabajando.",
+  "loading": "Cargando…",
+  "empty": "Aún no hay tareas para este proyecto.",
+  "header": {
+    "live": "en vivo",
+    "tasksCount": "{{count}} tarea",
+    "tasksCount_other": "{{count}} tareas",
+    "countOf": "{{filtered}} de {{total}} tareas",
+    "health": {
+      "idle": "MCP sin actividad",
+      "idleTooltip": "El MCP cloudcli-tasks no ha contactado al servidor. Verifica que el cliente MCP esté conectado en la configuración del editor o del agente.",
+      "stale": "MCP inactivo {{minutes}} min",
+      "staleTooltip": "El MCP cloudcli-tasks no ha contactado al servidor en los últimos minutos. Es posible que los agentes no puedan archivar tareas."
+    }
+  },
+  "filters": {
+    "all": "Todas",
+    "statusLabel": "Estado",
+    "typeLabel": "Tipo",
+    "agentLabel": "Agente"
+  },
+  "status": {
+    "submitted": "enviada",
+    "pending": "pendiente",
+    "approved": "aprobada",
+    "in_progress": "en curso",
+    "completed": "completada",
+    "failed": "fallida",
+    "cancelled": "cancelada"
+  },
+  "types": {
+    "build": "construir",
+    "deploy": "desplegar",
+    "fix": "arreglar",
+    "research": "investigar",
+    "review": "revisar",
+    "audit": "auditar",
+    "notify": "notificar",
+    "other": "otro"
+  },
+  "agents": {},
+  "fields": {
+    "title": "Título",
+    "description": "Descripción",
+    "prompt": "Prompt",
+    "agent": "Agente",
+    "taskType": "Tipo",
+    "createdAt": "Creada",
+    "startedAt": "Iniciada",
+    "completedAt": "Completada",
+    "actions": "Acciones",
+    "id": "ID",
+    "result": "Resultado",
+    "error": "Error",
+    "contextRefs": "Referencias de contexto",
+    "createdBy": "Creado por"
+  },
+  "actions": {
+    "close": "Cerrar",
+    "refresh": "Actualizar",
+    "approve": "Aprobar",
+    "cancel": "Cancelar",
+    "quarantine": "Cuarentena",
+    "restore": "Restaurar",
+    "delete": "Eliminar",
+    "deleteConfirmTitle": "¿Eliminar tarea?",
+    "deleteConfirmBody": "Esto eliminará el archivo de la tarea del disco de forma permanente. No se puede deshacer.",
+    "deleteConfirmYes": "Eliminar",
+    "deleteConfirmNo": "Cancelar",
+    "copy": "Copiar",
+    "copied": "Copiado",
+    "copyPath": "Copiar ruta"
+  },
+  "detail": {
+    "historyTitle": "Historial",
+    "historyEmpty": "Aún no hay historial registrado.",
+    "historyCreated": "Tarea archivada",
+    "historyApproved": "Aprobada",
+    "historyCancelled": "Cancelada",
+    "historyQuarantined": "Puesta en cuarentena",
+    "historyRestored": "Restaurada",
+    "historyStatusChange": "Estado: {{from}} → {{to}}",
+    "historyNote": "Nota añadida",
+    "quarantinedBadge": "en cuarentena",
+    "noteLabel": "Nota (se adjunta a la próxima acción)",
+    "notePlaceholder": "Motivo o comentario opcional para la acción del operador"
+  }
+}

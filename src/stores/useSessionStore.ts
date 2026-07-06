@@ -326,7 +326,10 @@ function pruneRealtimeSupersededByServer(
       return false;
     }
 
-    if (message.id.startsWith('local_') && hasServerEchoForLocalUser(message, serverMessages)) {
+    // `message.id` can be undefined for non-NormalizedMessage server events
+    // (e.g. `tasks_queue_updated`, `session_upserted`) that route through the
+    // same WebSocket pipe. Guard before calling string methods.
+    if (typeof message.id === 'string' && message.id.startsWith('local_') && hasServerEchoForLocalUser(message, serverMessages)) {
       return false;
     }
 
@@ -374,7 +377,9 @@ function computeMerged(server: NormalizedMessage[], realtime: NormalizedMessage[
     // Optimistic user rows use `local_*` ids; once the same text exists on the
     // server-backed copy from the same send window, drop the realtime echo to
     // avoid duplicate bubbles without hiding repeated prompts from history.
-    if (message.id.startsWith('local_')) {
+    // Guard against undefined `id` — non-NormalizedMessage server events share
+    // this filter path (see `tasks_queue_updated`).
+    if (typeof message.id === 'string' && message.id.startsWith('local_')) {
       if (hasServerEchoForLocalUser(message, server)) {
         return false;
       }

@@ -110,6 +110,7 @@
     "voice": "Voz",
     "tasks": "Tareas",
     "browser": "Navegador",
+    "taskQueue": "Cola de tareas",
     "notifications": "Notificaciones",
     "plugins": "Complementos",
     "about": "Acerca de"
@@ -571,6 +572,11 @@
     "installAriaLabel": "URL del repositorio git del complemento",
     "tab": "pestaña",
     "runningStatus": "en ejecución"
+  },
+  "tasksQueue": {
+    "description": "Cola de tareas nativa. Los agentes archivan tareas en la cola del proyecto activo y la pestaña del encabezado las muestra con estado en vivo, historial y acciones del operador.",
+    "enableLabel": "Habilitar cola de tareas nativa",
+    "enableDescription": "Registra el MCP cloudcli-tasks en todos los proveedores para que cualquier agente pueda archivar tareas, actualizar su estado, aprobar, cancelar o poner en cuarentena elementos de la cola del proyecto en el que está trabajando."
   },
   "browserUsePanel": {
     "title": "Navegador",

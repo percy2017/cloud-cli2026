@@ -86,6 +86,27 @@ export const projectsDb = {
         return row?.project_path ?? null;
     },
 
+    /**
+     * Inverse lookup: resolve a DB project row from the absolute filesystem
+     * path. Used by the chat-run sidecar to stamp the active projectId onto
+     * cloudcli-tasks MCP tool calls. Returns `null` when the path is not
+     * registered (e.g. an ad-hoc session in a folder that was never added as
+     * a project).
+     */
+    getProjectByPath(projectPath: string): ProjectRepositoryRow | null {
+        if (!projectPath) {
+            return null;
+        }
+        const db = getConnection();
+        const normalizedProjectPath = normalizeProjectPath(projectPath);
+        const row = db.prepare(`
+            SELECT project_id, project_path, custom_project_name, isStarred, isArchived
+            FROM projects
+            WHERE project_path = ?
+        `).get(normalizedProjectPath) as ProjectRepositoryRow | undefined;
+        return row ?? null;
+    },
+
     getProjectPaths(): ProjectRepositoryRow[] {
         const db = getConnection();
         return db.prepare(`

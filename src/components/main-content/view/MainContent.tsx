@@ -17,6 +17,7 @@ import { useEditorSidebar } from '../../code-editor/hooks/useEditorSidebar';
 import EditorSidebar from '../../code-editor/view/EditorSidebar';
 import type { Project } from '../../../types/app';
 import { TaskMasterPanel } from '../../task-master';
+import TaskQueuePanel from '../../task-queue/view/TaskQueuePanel';
 
 import MainContentHeader from './subcomponents/MainContentHeader';
 import MainContentStateView from './subcomponents/MainContentStateView';
@@ -59,9 +60,11 @@ function MainContent({
   const { currentProject, setCurrentProject } = useTaskMaster() as TaskMasterContextValue;
   const { tasksEnabled, isTaskMasterInstalled } = useTasksSettings() as TasksSettingsContextValue;
   const [browserUseEnabled, setBrowserUseEnabled] = useState(false);
+  const [taskQueueEnabled, setTaskQueueEnabled] = useState(false);
 
   const shouldShowTasksTab = Boolean(tasksEnabled && isTaskMasterInstalled);
   const shouldShowBrowserTab = browserUseEnabled;
+  const shouldShowTaskQueueTab = taskQueueEnabled;
 
   const {
     editingFile,
@@ -115,11 +118,39 @@ function MainContent({
     return () => window.removeEventListener('browserUseSettingsChanged', loadBrowserUseSettings);
   }, [loadBrowserUseSettings]);
 
+  const loadTaskQueueSettings = useCallback(async () => {
+    try {
+      const response = await authenticatedFetch('/api/tasks/settings');
+      const data = await response.json();
+      // Mirror the browser-use pattern: hide the tab when the native feature is
+      // disabled in settings (service default is `enabled: false`). The MCP
+      // toggle and the tab visibility share the same switch so users only have
+      // one setting to reason about.
+      setTaskQueueEnabled(
+        Boolean(response.ok && data?.success !== false && data?.data?.settings?.enabled === true),
+      );
+    } catch {
+      setTaskQueueEnabled(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadTaskQueueSettings();
+    window.addEventListener('tasksSettingsChanged', loadTaskQueueSettings);
+    return () => window.removeEventListener('tasksSettingsChanged', loadTaskQueueSettings);
+  }, [loadTaskQueueSettings]);
+
   useEffect(() => {
     if (!shouldShowBrowserTab && activeTab === 'browser') {
       setActiveTab('chat');
     }
   }, [shouldShowBrowserTab, activeTab, setActiveTab]);
+
+  useEffect(() => {
+    if (!shouldShowTaskQueueTab && activeTab === 'taskQueue') {
+      setActiveTab('chat');
+    }
+  }, [shouldShowTaskQueueTab, activeTab, setActiveTab]);
 
   usePaletteOpsRegister({
     openFile: (filePath: string) => {
@@ -149,6 +180,7 @@ function MainContent({
         selectedSession={selectedSession}
         shouldShowTasksTab={shouldShowTasksTab}
         shouldShowBrowserTab={shouldShowBrowserTab}
+        shouldShowTaskQueueTab={shouldShowTaskQueueTab}
         isMobile={isMobile}
         onMenuClick={onMenuClick}
       />
@@ -208,6 +240,12 @@ function MainContent({
           {shouldShowBrowserTab && activeTab === 'browser' && (
             <div className="h-full overflow-hidden">
               <BrowserUsePanel isVisible={activeTab === 'browser'} onShowSettings={onShowSettings} />
+            </div>
+          )}
+
+          {activeTab === 'taskQueue' && (
+            <div className="h-full overflow-auto p-4">
+              <TaskQueuePanel selectedProject={selectedProject} />
             </div>
           )}
 
