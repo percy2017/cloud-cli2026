@@ -645,5 +645,53 @@
       "loadFailed": "Failed to load Browser",
       "actionFailed": "Browser action failed"
     }
+  },
+  "onboarding": {
+    "git": {
+      "title": "Git Configuration",
+      "description": "Configure your git identity to ensure proper attribution for commits.",
+      "nameLabel": "Git Name",
+      "namePlaceholder": "John Doe",
+      "emailLabel": "Git Email",
+      "emailPlaceholder": "john@example.com",
+      "nameHint": "Saved as `git config --global user.name`.",
+      "emailHint": "Saved as `git config --global user.email`.",
+      "errors": {
+        "required": "Both git name and email are required.",
+        "invalidEmail": "Please enter a valid email address.",
+        "saveFailed": "Failed to save git configuration"
+      }
+    },
+    "agents": {
+      "title": "Connect Your AI Agents",
+      "description": "Login to one or more AI coding assistants. All are optional.",
+      "footerNote": "You can configure these later in Settings.",
+      "status": {
+        "checking": "Checking...",
+        "connected": "Connected",
+        "notConnected": "Not connected"
+      },
+      "loginButton": "Login",
+      "providerTitles": {
+        "claude": "Claude Code",
+        "cursor": "Cursor",
+        "codex": "OpenAI Codex",
+        "gemini": "Gemini",
+        "opencode": "OpenCode"
+      }
+    },
+    "steps": {
+      "git": "Git Configuration",
+      "agents": "Connect Agents",
+      "required": "Required"
+    },
+    "buttons": {
+      "previous": "Previous",
+      "next": "Next",
+      "saving": "Saving...",
+      "completing": "Completing...",
+      "completeSetup": "Complete Setup",
+      "completeFailed": "Failed to complete onboarding"
+    }
   }
 }

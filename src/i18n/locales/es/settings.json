@@ -645,5 +645,53 @@
       "loadFailed": "Error al cargar el Navegador",
       "actionFailed": "La acción del Navegador falló"
     }
+  },
+  "onboarding": {
+    "git": {
+      "title": "Configuración de Git",
+      "description": "Configura tu identidad de git para asegurar la atribución correcta en los commits.",
+      "nameLabel": "Nombre de Git",
+      "namePlaceholder": "Juan Pérez",
+      "emailLabel": "Correo de Git",
+      "emailPlaceholder": "juan@ejemplo.com",
+      "nameHint": "Se guarda como `git config --global user.name`.",
+      "emailHint": "Se guarda como `git config --global user.email`.",
+      "errors": {
+        "required": "El nombre y el correo de git son obligatorios.",
+        "invalidEmail": "Por favor ingresa un correo electrónico válido.",
+        "saveFailed": "No se pudo guardar la configuración de git"
+      }
+    },
+    "agents": {
+      "title": "Conecta tus agentes de IA",
+      "description": "Inicia sesión en uno o varios asistentes de código con IA. Todos son opcionales.",
+      "footerNote": "Puedes configurarlos más tarde en Ajustes.",
+      "status": {
+        "checking": "Comprobando...",
+        "connected": "Conectado",
+        "notConnected": "No conectado"
+      },
+      "loginButton": "Iniciar sesión",
+      "providerTitles": {
+        "claude": "Claude Code",
+        "cursor": "Cursor",
+        "codex": "OpenAI Codex",
+        "gemini": "Gemini",
+        "opencode": "OpenCode"
+      }
+    },
+    "steps": {
+      "git": "Configuración de Git",
+      "agents": "Conectar agentes",
+      "required": "Obligatorio"
+    },
+    "buttons": {
+      "previous": "Anterior",
+      "next": "Siguiente",
+      "saving": "Guardando...",
+      "completing": "Finalizando...",
+      "completeSetup": "Completar configuración",
+      "completeFailed": "No se pudo finalizar la configuración"
+    }
   }
 }
