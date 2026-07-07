@@ -110,7 +110,6 @@
     "voice": "Voz",
     "tasks": "Tareas",
     "browser": "Navegador",
-    "taskQueue": "Cola de tareas",
     "notifications": "Notificaciones",
     "plugins": "Complementos",
     "about": "Acerca de"
@@ -512,7 +511,7 @@
       "unofficialTitle": "Otros complementos",
       "unofficialDescription": "Complementos e integraciones no oficiales de otros usuarios. Revisa el código fuente antes de instalar."
     },
-    "starterPlugin": {
+    "projectStatsPlugin": {
       "name": "Estadísticas del proyecto",
       "badge": "inicio",
       "description": "Recuento de archivos, líneas de código, desglose por tipo de archivo y actividad reciente de tu proyecto.",
@@ -572,11 +571,6 @@
     "installAriaLabel": "URL del repositorio git del complemento",
     "tab": "pestaña",
     "runningStatus": "en ejecución"
-  },
-  "tasksQueue": {
-    "description": "Cola de tareas nativa. Los agentes archivan tareas en la cola del proyecto activo y la pestaña del encabezado las muestra con estado en vivo, historial y acciones del operador.",
-    "enableLabel": "Habilitar cola de tareas nativa",
-    "enableDescription": "Registra el MCP cloudcli-tasks en todos los proveedores para que cualquier agente pueda archivar tareas, actualizar su estado, aprobar, cancelar o poner en cuarentena elementos de la cola del proyecto en el que está trabajando."
   },
   "browserUsePanel": {
     "title": "Navegador",

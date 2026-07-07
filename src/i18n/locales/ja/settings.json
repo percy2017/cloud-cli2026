@@ -471,7 +471,7 @@
     "buildYourOwn": "プラグインを自作する",
     "starter": "スターター",
     "docs": "ドキュメント",
-    "starterPlugin": {
+    "projectStatsPlugin": {
       "name": "プロジェクト統計",
       "badge": "スターター",
       "description": "プロジェクトのファイル数、コード行数、ファイルタイプの内訳、最近のアクティビティを表示します。",

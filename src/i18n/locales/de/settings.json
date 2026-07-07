@@ -471,7 +471,7 @@
     "buildYourOwn": "Eigenes Plugin erstellen",
     "starter": "Starter",
     "docs": "Dokumentation",
-    "starterPlugin": {
+    "projectStatsPlugin": {
       "name": "Projektstatistiken",
       "badge": "starter",
       "description": "Dateianzahl, Codezeilen, Dateityp-Aufschlüsselung und aktuelle Aktivitäten für dein Projekt.",

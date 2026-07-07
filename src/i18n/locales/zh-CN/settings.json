@@ -472,7 +472,7 @@
     "buildYourOwn": "构建您自己的插件",
     "starter": "入门模板",
     "docs": "文档",
-    "starterPlugin": {
+    "projectStatsPlugin": {
       "name": "项目统计",
       "badge": "入门",
       "description": "查看项目的文件数、代码行数、文件类型分布以及最近活动。",

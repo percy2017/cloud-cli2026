@@ -1,6 +1,6 @@
 import type { WebSocket } from 'ws';
 
-import { projectsDb, sessionsDb } from '@/modules/database/index.js';
+import { sessionsDb } from '@/modules/database/index.js';
 import { chatRunRegistry } from '@/modules/websocket/services/chat-run-registry.service.js';
 import { connectedClients, WS_OPEN_STATE } from '@/modules/websocket/services/websocket-state.service.js';
 import type {
@@ -47,26 +47,6 @@ type ChatWebSocketDependencies = {
  * Extracts the authenticated request user id in the formats currently produced
  * by platform and OSS auth code paths.
  */
-/**
- * Look up the DB project id associated with a session so the cloudcli-tasks
- * sidecar can scope agent-side task creation. Sessions are linked to projects
- * via the `project_path` foreign key; we resolve the matching `project_id`
- * once here and let `chatRunRegistry.startRun` stamp it onto the sidecar.
- * Returns `null` when the session or its project is missing (orphan rows are
- * tolerated — the bridge will fall back to a global queue in that case).
- */
-function resolveProjectIdForSession(session: { project_path?: string | null }): string | null {
-  if (!session.project_path) {
-    return null;
-  }
-  try {
-    const row = projectsDb.getProjectByPath(session.project_path);
-    return row?.project_id ?? null;
-  } catch {
-    return null;
-  }
-}
-
 function readRequestUserId(
   request: AuthenticatedWebSocketRequest | undefined
 ): string | number | null {
@@ -160,7 +140,6 @@ async function handleChatSend(
     providerSessionId: session.provider_session_id,
     connection: ws,
     userId,
-    projectId: resolveProjectIdForSession(session),
   });
 
   if (!run) {

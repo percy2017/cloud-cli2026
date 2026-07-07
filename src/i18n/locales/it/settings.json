@@ -471,7 +471,7 @@
     "starterPluginLabel": "Plugin iniziale",
     "starter": "Iniziale",
     "docs": "Documentazione",
-    "starterPlugin": {
+    "projectStatsPlugin": {
       "name": "Statistiche progetto",
       "badge": "iniziale",
       "description": "Conteggio file, righe di codice, ripartizione per tipo di file e attività recente per il tuo progetto.",

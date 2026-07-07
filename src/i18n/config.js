@@ -23,7 +23,6 @@ import enChat from './locales/en/chat.json';
 import enCodeEditor from './locales/en/codeEditor.json';
 // eslint-disable-next-line import-x/order
 import enTasks from './locales/en/tasks.json';
-import enTaskQueue from './locales/en/taskQueue.json';
 
 import koCommon from './locales/ko/common.json';
 import koSettings from './locales/ko/settings.json';
@@ -93,7 +92,6 @@ import esChat from './locales/es/chat.json';
 import esCodeEditor from './locales/es/codeEditor.json';
 // eslint-disable-next-line import-x/order
 import esTasks from './locales/es/tasks.json';
-import esTaskQueue from './locales/es/taskQueue.json';
 
 import zhTWCommon from './locales/zh-TW/common.json';
 import zhTWSettings from './locales/zh-TW/settings.json';
@@ -136,7 +134,6 @@ i18n
         chat: enChat,
         codeEditor: enCodeEditor,
         tasks: enTasks,
-        taskQueue: enTaskQueue,
       },
       ko: {
         common: koCommon,
@@ -207,7 +204,6 @@ i18n
         chat: esChat,
         codeEditor: esCodeEditor,
         tasks: esTasks,
-        taskQueue: esTaskQueue,
       },
       'zh-TW': {
         common: zhTWCommon,

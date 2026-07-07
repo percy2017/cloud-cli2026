@@ -47,7 +47,7 @@ type PluginRecommendation = {
 const OFFICIAL_PLUGIN_RECOMMENDATIONS: PluginRecommendation[] = [
   {
     id: 'project-stats',
-    translationKey: 'starterPlugin',
+    translationKey: 'projectStatsPlugin',
     repoUrl: STARTER_PLUGIN_URL,
     installedNames: ['project-stats'],
     icon: BarChart3,

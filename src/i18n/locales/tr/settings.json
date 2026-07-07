@@ -472,7 +472,7 @@
     "starterPluginLabel": "Başlangıç Eklentisi",
     "starter": "Başlangıç",
     "docs": "Dokümanlar",
-    "starterPlugin": {
+    "projectStatsPlugin": {
       "name": "Proje İstatistikleri",
       "badge": "başlangıç",
       "description": "Projen için dosya sayıları, kod satırları, dosya türü dağılımı ve son etkinlik.",

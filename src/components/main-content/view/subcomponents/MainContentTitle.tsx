@@ -32,10 +32,6 @@ function getTabTitle(activeTab: AppTab, shouldShowTasksTab: boolean, t: (key: st
     return t('tabs.browser');
   }
 
-  if (activeTab === 'taskQueue') {
-    return t('tabs.taskQueue');
-  }
-
   return 'Project';
 }
 

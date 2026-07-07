@@ -51,7 +51,9 @@
     "start": "npm run build && npm run server",
     "release": "./release.sh",
     "prepublishOnly": "npm run build",
-    "postinstall": "node scripts/fix-node-pty.js",
+    "postinstall": "node scripts/fix-node-pty.js && node scripts/fix-server-native-modules.js",
+    "fix:native": "node scripts/fix-server-native-modules.js",
+    "fix:plugin-native": "node scripts/fix-plugin-native-modules.js",
     "prepare": "husky",
     "update:platform": "./update-platform.sh"
   },

@@ -32,6 +32,14 @@ module.exports = {
       // were rebuilt against the Node 22 ABI after `npm ci`, so the system Node 24
       // cannot dlopen them. Overridable via NODE_BINARY in .env; falls back to
       // "node" from PATH when unset.
+      //
+      // If you ever change NODE_BINARY (or run `npm install` with a different
+      // node on PATH) you MUST rebuild the native modules against the new
+      // binary or the app will crash on startup with ERR_DLOPEN_FAILED. Run:
+      //   npm run fix:native
+      // The postinstall script (`scripts/fix-server-native-modules.js`) does
+      // this automatically on every `npm install`, so the common case is
+      // already covered.
       exec_interpreter: process.env.NODE_BINARY || 'node',
       script: 'dist-server/server/index.js',
       cwd: __dirname,

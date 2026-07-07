@@ -23,7 +23,8 @@ Requires Node.js 22+ (`.nvmrc` pins `v22`). Use npm — `package.json` declares 
 - `npm run server:bundle` — build + run `scripts/release/build-server-bundle.js` for the npm tarball.
 - `npm run release` — interactive release via `release-it` + `@release-it/conventional-changelog` (requires `GITHUB_TOKEN`).
 - `node scripts/fix-node-pty.js` — postinstall for the **server's own** `node-pty` (macOS spawn-helper perms). Runs automatically via `postinstall`.
-- `node scripts/fix-plugin-native-modules.js` — recompile native bindings (`node-pty`, `better-sqlite3`, etc.) for installed plugins under `~/.claude-code-ui/plugins/*`. Run after a Node upgrade or when a plugin crashes with "Cannot find module 'node-pty'". Accepts an optional plugin dir name (`… web-terminal`) and `--dry-run`. The install/update flows in `server/utils/plugin-loader.js` already call `npm rebuild` automatically — this script is the manual escape hatch for plugins installed before that fix.
+- `node scripts/fix-server-native-modules.js` — recompile the **server's own** native bindings (`better-sqlite3`, `node-pty`, `bcrypt`, `sharp`, …) against the Node ABI used by the runtime. The runtime Node is read from `NODE_BINARY` in `.env` (the same value `ecosystem.config.cjs` consumes for PM2), falling back to `process.execPath`. Runs automatically via `postinstall` and is also exposed as `npm run fix:native`. **Run this after changing `NODE_BINARY` or when the server crashes on startup with `ERR_DLOPEN_FAILED: ... better_sqlite3.node`.** Mirror of `fix-plugin-native-modules.js` for the server itself.
+- `node scripts/fix-plugin-native-modules.js` — recompile native bindings (`node-pty`, `better-sqlite3`, etc.) for installed plugins under `~/.claude-code-ui/plugins/*`. Run after a Node upgrade or when a plugin crashes with "Cannot find module 'node-pty'". Accepts an optional plugin dir name (`… web-terminal`) and `--dry-run`. The install/update flows in `server/utils/plugin-loader.js` already call `npm rebuild` automatically — this script is the manual escape hatch for plugins installed before that fix. Also exposed as `npm run fix:plugin-native`.
 
 ### Tests
 
@@ -84,7 +85,6 @@ Current modules:
 - `modules/websocket/` — owns the single `ws` server. The README in that folder documents the message envelope, the per-run `seq` event log, the PTY lifecycle for `/shell`, and the plugin WebSocket proxy.
 - `modules/notifications/` — web-push + notification preferences + notification orchestration.
 - `modules/browser-use/` — Browser-Use MCP integration; owns its own routes (`browser-use.routes.ts`, `browser-use-mcp.routes.ts`) and service. **Per-chat-run session lifecycle:** each chat run gets its own auto-created `BrowserUseSession` (one per run, reused across tool calls, closed when the run completes) correlated via a sidecar file at `~/.cloudcli/browser-use/current-chat-run.json` written by `modules/websocket/services/chat-run-registry.service.ts` on `startRun` and cleared on `completeRun`. The MCP stdio server at `server/browser-use-mcp.ts` reads the sidecar with a 1s TTL cache and injects `chatRunId` into every tool call so the HTTP bridge in `browser-use-mcp.routes.ts` can resolve or auto-create the right session. **Live WebSocket broadcast:** every session mutation is pushed to the UI via three extra `GatewayEventKind` values — `browser_use_session_created`, `browser_use_session_updated`, `browser_use_session_closed` (declared in `server/shared/types.ts`, consumed by `src/components/browser-use/view/BrowserUsePanel.tsx` via `useWebSocket().subscribe`). Backward-compatible: existing MCP tools that pass `sessionId` directly keep working; the auto-management is additive.
-- `modules/tasks/` — Native per-project task queue (no external dependency). Companion to Browser-Use: provides a CloudCLI-managed `cloudcli-tasks` MCP server (see pattern below). Owns `tasks.routes.ts` (REST: `/api/tasks/*` with `authenticateToken`), `tasks-mcp.routes.ts` (token-gated HTTP bridge: `/api/tasks-mcp/tools/:toolName`), and `tasks.service.ts`. Persistence is **per-project YAML** at `<projectPath>/.cloudcli/tasks/<id>.yml` (active) or `<projectPath>/.cloudcli/tasks/quarantine/<id>.yml` (quarantined); project paths are resolved through `projectsDb.getProjectPathById(projectId)` so the queue travels with the workspace. Writes use atomic `.tmp + rename` and a per-file `proper-lockfile` flock to serialize concurrent agent + operator edits. `app_config` only stores the toggle + MCP token under `tasks_settings` and `tasks_mcp_token`. The MCP stdio server at `server/tasks-mcp.ts` follows the Browser-Use pattern and exposes 9 tools: `tasks_list`, `tasks_get`, `tasks_create`, `tasks_update_status`, `tasks_approve`, `tasks_cancel`, `tasks_quarantine`, `tasks_restore`, `tasks_delete`. The MCP server requires `projectId` on every call — agents never set it; the stdio server reads `~/.cloudcli/tasks/current-chat-run.json` (which `chat-run-registry.service.ts#writeTasksSidecar` writes on `startRun` and `clearTasksSidecar` removes on `completeRun`, now including the DB-assigned `projectId`) and injects it as `chatRunId` + `projectId` into every tool call. Live WebSocket broadcast carries `{kind: 'tasks_queue_updated', projectId, tasks, timestamp}` so the UI re-pulls when its `projectId` matches. **MCP server naming convention** (`src/components/mcp/view/McpServers.tsx`): any server whose name starts with `cloudli-` is auto-detected as managed by CloudCLI, gets the lock badge + "Gestionado por CloudCLI." subtitle (i18n strings at `settings.mcpServers.managed.{badge,hint}` in en/es/fr), and cannot be edited/deleted from the UI. Use this naming for any new managed MCP.
 
 ### Frontend layout (`src/`)
 
@@ -146,14 +146,14 @@ All Claude Code tools are disabled by default in the UI — users opt in via Set
 
 ## Entry points
 
-- npm binary: `dist-server/server/cli.js` (`cloudcli start | status | sandbox | browser-use-mcp | tasks-mcp | help | version`).
+- npm binary: `dist-server/server/cli.js` (`cloudcli start | status | sandbox | browser-use-mcp | help | version`).
 - HTTP server: `dist-server/server/index.js` (or `server/index.js` via `tsx`).
 - Electron shell: `electron/main.js` (build with `npm run desktop:dist:mac` / `:win`).
 - Frontend: `src/main.jsx` → `src/App.tsx`.
 
 ## Built-in MCP servers ("Managed by CloudCLI")
 
-MCP servers whose name starts with `cloudcli-` are owned by CloudCLI itself — registered/unregistered automatically when the user toggles the corresponding feature, exposed read-only in Settings → MCP Servers with the lock badge. The pattern (codified by `modules/browser-use/` and now `modules/tasks/`) is:
+MCP servers whose name starts with `cloudcli-` are owned by CloudCLI itself — registered/unregistered automatically when the user toggles the corresponding feature, exposed read-only in Settings → MCP Servers with the lock badge. The pattern (codified by `modules/browser-use/`) is:
 
 1. **Module** under `server/modules/<name>/` with `index.ts` barrel, `<name>.service.ts`, `<name>.routes.ts` (REST), `<name>-mcp.routes.ts` (HTTP bridge).
 2. **Stdio MCP** at `server/<name>-mcp.ts` (top-level, not in the module folder). JSON-RPC newline-delimited, 1-second sidecar cache, `fetch` to the bridge with bearer token.
@@ -162,55 +162,14 @@ MCP servers whose name starts with `cloudcli-` are owned by CloudCLI itself — 
 5. **CLI subcommand** in `server/cli.js#startMcpFn()` + `case '<name>-mcp':` in the main switch.
 6. **MCP registration** via `providerMcpService.addMcpServerToAllProviders({ name: 'cloudcli-<name>', scope: 'user', transport: 'stdio', command, args, env: { CLOUDCLI_<NAME>_MCP_TOKEN, CLOUDCLI_<NAME>_API_URL } })`, triggered from the service's `updateSettings({ enabled: true })`.
 7. **Shutdown hook** in `server/index.js#shutdownRuntimeServices()` calls `<name>Service.stopAll()` for in-memory cleanup.
-8. **Settings persistence** in `app_config` keys: `<name>_settings` (feature toggle + any extra fields you need), `<name>_mcp_token`. Domain state can live elsewhere — for `cloudcli-tasks` it lives as per-project YAML under `<projectPath>/.cloudcli/tasks/`.
+8. **Settings persistence** in `app_config` keys: `<name>_settings` (feature toggle + any extra fields you need), `<name>_mcp_token`. Domain state can live elsewhere — for `cloudcli-browser-use` it lives in SQLite and per-chat-run sidecar files; pick the storage that fits the feature.
 
 To add a new managed MCP: copy a sibling (`browser-use` is the most complete example), pick a `cloudcli-<feature>` name, and follow the eight steps above. i18n strings `settings.mcpServers.managed.{badge,hint}` and the read-only badge UI in `src/components/mcp/view/McpServers.tsx#isManagedServer` are already in place — the prefix check is the only "magic" you need.
 
-## Task queue (native vs plugin)
+## Task queue (external plugin only)
 
-CloudCLI has **two ways** to manage queued agent tasks. They serve different needs; do not conflate:
+CloudCLI ships **without** a native task queue. The only built-in option is the external `TadMSTR/cloudcli-plugin-task-queue` plugin, installed via Settings → Plugins.
 
-- **Native module** `modules/tasks/` + `cloudcli-tasks` MCP — built-in, ships with CloudCLI, persists per-project YAML, exposes REST + MCP, no external process. Use when the agent needs `tasks_create` / `tasks_list` / `tasks_update_status` / `tasks_approve` / `tasks_cancel` / `tasks_quarantine` / `tasks_restore` tools available across Claude/Codex/Cursor/Gemini/OpenCode without any installation.
-- **External plugin** `TadMSTR/cloudcli-plugin-task-queue` (installed via Settings → Plugins) — separate Node subprocess, reads YAML from `~/.claude/task-queue/*.yml`, requires the `task-queue-mcp` service in `:8485` for mutations. Use when you need the schema-locked YAML interop with a separate task dispatcher.
+- Separate Node subprocess, reads YAML from `~/.claude/task-queue/*.yml`, requires the `task-queue-mcp` HTTP service in `:8485` for mutations, exposes UI in a tab plugin slot. Use when you need the schema-locked YAML interop with a separate task dispatcher.
 
-### Native module (`modules/tasks/`)
-
-**Data model** — `Task` (`server/modules/tasks/tasks.service.ts`) is the single source of truth. Fields:
-
-- `id` (UUID v4), `projectId` (DB-assigned `projects.project_id`; **mandatory**), `agent` (free-form role string the MCP stamps from `chatRunId`).
-- Title / description / prompt + the 7-status lifecycle: `submitted → pending → approved → in_progress → completed | failed | cancelled`. Quarantined is a boolean flag encoded by the file living under `quarantine/`.
-- Semantic taxonomy: `taskType` ∈ {build, deploy, fix, research, review, audit, notify, other}, `priority` ∈ {normal, high, urgent}, `riskLevel` ∈ {low, medium, high}.
-- `contextRefs: string[]` (paths the agent must consult), `history: TaskHistoryEntry[]` (append-only audit log with `at`, `actor`, `role` ∈ {agent, operator}, `action` ∈ {created, status_changed, approved, cancelled, quarantined, restored, note}, optional `fromStatus`/`status`/`note`).
-- Lifecycle timestamps: `createdAt`, `updatedAt`, `startedAt` (set on `running`-equivalent transition), `completedAt` (set on any terminal status).
-- `createdBy` is the MCP stamp `mcp:chat-run:<uuid>` so we can correlate the agent that originally filed the task.
-
-**Storage** — One YAML file per task under `<projectPath>/.cloudcli/tasks/<id>.yml`. Quarantined tasks live in `<projectPath>/.cloudcli/tasks/quarantine/<id>.yml`. The path is **always resolved through `projectsDb.getProjectPathById(projectId)`** — the service refuses an unknown projectId with `null` rather than touching the filesystem. Writes use `yaml.dump` to a `.tmp` sibling + `fs.renameSync`, guarded by `proper-lockfile` `lock()` / `release()` with `{ retries: 8, minTimeout: 25, maxTimeout: 250 }` and `stale: 5000`. Tests live under `server/modules/tasks/tests/tasks.service.test.ts` (run with `npx tsx --tsconfig server/tsconfig.json --test …`).
-
-**MCP surface** — `server/tasks-mcp.ts` (stdio, registered as `cloudcli-tasks`, command `cloudcli tasks-mcp`, env `CLOUDCLI_TASKS_API_URL` + `CLOUDCLI_TASKS_MCP_TOKEN`) proxies to `/api/tasks-mcp/tools/:toolName` (token-gated HTTP bridge in `tasks-mcp.routes.ts`). The 9 tools:
-
-- `tasks_list(projectId, status?, taskType?, priority?, agent?, limit?)` — read-only, also returns per-status stats.
-- `tasks_get(projectId, id)`.
-- `tasks_create(projectId, agent?, title*, description?, prompt*, taskType?, riskLevel?, priority?, contextRefs?)` — the stdio server injects `projectId` + `chatRunId` from the sidecar when missing.
-- `tasks_update_status(projectId, id, status, result?, error?, note?)` — records a `status_changed` history entry stamped with the operator/agent role.
-- `tasks_approve`, `tasks_cancel`, `tasks_quarantine`, `tasks_restore` — operator actions with role `operator`, optional `note`.
-- `tasks_delete(projectId, id)` — explicit delete (rare; usually `cancel` or `quarantine` is preferred).
-
-**REST** — `/api/tasks/*` behind `authenticateToken` mirrors the MCP surface: `GET/POST /api/tasks`, `GET/PATCH/DELETE /api/tasks/:id`, plus `POST /api/tasks/:id/{approve,cancel,quarantine,restore}`, `GET /api/tasks/stats?projectId=…`, `GET/PUT /api/tasks/settings`. Every endpoint requires `projectId` either as query or body — there is no global list.
-
-**Sidecar pattern** — `chat-run-registry.service.ts#writeTasksSidecar` (called from `startRun`) writes `{ chatRunId, userId, projectId, updatedAt }` to `~/.cloudcli/tasks/current-chat-run.json`. The stdio MCP server reads it with a 1-second TTL cache (in-process) and injects `projectId` into every tool call. `clearTasksSidecar` (from `completeRun`) does a read-before-delete so a slow finish can't clobber a newer run. The `projectId` is resolved from `session.project_path → projectsDb.getProjectByPath()`.
-
-**UI** — `src/components/task-queue/`:
-
-- `TaskQueuePanel.tsx` is mounted by `MainContent.tsx` under the `taskQueue` tab in the **header** (NOT inside the Settings dialog — the tab is the user-facing surface). It receives `selectedProject` and calls `/api/tasks?projectId=<active>&limit=200&includeQuarantined=true`. Live updates via `subscribe(...)` filter on `message.kind === 'tasks_queue_updated' && message.projectId === selectedProject.projectId`.
-- Layout mirrors the TadMSTR plugin: a compact header bar (`Task Queue  N tasks  ·  ● live  ↻`), one row of `<select>` filters (Agent / Status / Type) plus `X of Y tasks`, then sections grouped by agent (`SYSADMIN (1)` / `DEVELOPER (1)`), each containing horizontal rows with project name + status dot + status text + `<type> <title> — description` + relative time + outlined action buttons (Approve verde / Cancel rojo / Quarantine gris / Restore celeste). Clicking the title or project opens `TaskDetailModal.tsx` (history timeline + context refs + note textarea).
-- **`CreateTaskModal` was removed** — the UI does not file tasks. Agents create them via MCP. The `tasks-create` entry point lives entirely on the MCP side.
-- `TaskQueueSettingsTab.tsx` only exposes the toggle `Enable native task queue` (no project picker — the active project is always implicit).
-- i18n namespace `taskQueue` (en + es) covers `filters.{agentLabel,statusLabel,typeLabel}`, `status.*`, `types.*`, `agents.*`, `actions.{approve,cancel,quarantine,restore,refresh,close,copy,copied,copyPath}`, `header.{live,countOf,tasksCount,tasksCount_other}`, `detail.{historyTitle,historyCreated,historyApproved,historyCancelled,historyQuarantined,historyRestored,historyNote,historyStatusChange,quarantinedBadge,noteLabel,notePlaceholder}`. `settings.tasksQueue` namespace only carries the toggle's title/description.
-
-**Why per-project instead of global** — Tasks are filed by the agent currently running against a chat session, which already belongs to one project. Scoping storage by `projectsDb.getProjectPathById()` keeps the queue travelling with the workspace (survives projects being renamed/archived/recreated), matches how `TaskMaster` stores data under `<projectPath>/.taskmaster/`, and lets the UI filter by `selectedProject` without broadcasting cross-project.
-
-### External plugin (`TadMSTR/cloudcli-plugin-task-queue`)
-
-Separate Node subprocess, reads YAML from `~/.claude/task-queue/*.yml`, requires the `task-queue-mcp` HTTP service in `:8485` for mutations, exposes UI in a tab plugin slot. Use when you need the schema-locked YAML interop with a separate task dispatcher.
-
-**Skill `/task-queue`** (installed at `~/.claude/skills/task-queue/SKILL.md`) teaches Claude (me) how to use the **plugin**. If the native module is enabled instead, prefer its MCP tools over writing YAML manually.
+**Skill `/task-queue`** (installed at `~/.claude/skills/task-queue/SKILL.md`) teaches Claude (me) how to use the plugin.

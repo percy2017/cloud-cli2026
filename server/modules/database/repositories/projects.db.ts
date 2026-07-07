@@ -88,10 +88,8 @@ export const projectsDb = {
 
     /**
      * Inverse lookup: resolve a DB project row from the absolute filesystem
-     * path. Used by the chat-run sidecar to stamp the active projectId onto
-     * cloudcli-tasks MCP tool calls. Returns `null` when the path is not
-     * registered (e.g. an ad-hoc session in a folder that was never added as
-     * a project).
+     * path. Returns `null` when the path is not registered (e.g. an ad-hoc
+     * session in a folder that was never added as a project).
      */
     getProjectByPath(projectPath: string): ProjectRepositoryRow | null {
         if (!projectPath) {

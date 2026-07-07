@@ -110,7 +110,6 @@
     "voice": "Voice",
     "tasks": "Tasks",
     "browser": "Browser",
-    "taskQueue": "Task Queue",
     "notifications": "Notifications",
     "plugins": "Plugins",
     "about": "About"
@@ -512,7 +511,7 @@
       "unofficialTitle": "Other Plugins",
       "unofficialDescription": "Unofficial plugins and integrations from other users. Review the source before installing."
     },
-    "starterPlugin": {
+    "projectStatsPlugin": {
       "name": "Project Stats",
       "badge": "starter",
       "description": "File counts, lines of code, file-type breakdown, and recent activity for your project.",
@@ -572,11 +571,6 @@
     "installAriaLabel": "Plugin git repository URL",
     "tab": "tab",
     "runningStatus": "running"
-  },
-  "tasksQueue": {
-    "description": "Native task queue. Agents file tasks into the active project's queue and the tab in the header shows them with live status, history, and operator actions.",
-    "enableLabel": "Enable native task queue",
-    "enableDescription": "Registers the cloudcli-tasks MCP with all providers so any agent can file tasks, update status, approve, cancel, or quarantine items in the queue of the project it is currently working on."
   },
   "browserUsePanel": {
     "title": "Browser",

@@ -251,40 +251,6 @@ export const api = {
       }),
   },
 
-  // Native task queue (cloudcli-tasks MCP). Persisted in app_config; live
-  // updates pushed via the `tasks_queue_updated` WebSocket event.
-  tasks: {
-    list: ({ status, projectId, limit } = {}) => {
-      const params = new URLSearchParams();
-      if (status) params.set('status', status);
-      if (projectId) params.set('projectId', projectId);
-      if (limit) params.set('limit', String(limit));
-      const qs = params.toString();
-      return authenticatedFetch(`/api/tasks${qs ? `?${qs}` : ''}`);
-    },
-    get: (id) => authenticatedFetch(`/api/tasks/${encodeURIComponent(id)}`),
-    create: (body) => authenticatedFetch('/api/tasks', {
-      method: 'POST',
-      body: JSON.stringify(body),
-    }),
-    updateStatus: (id, body) => authenticatedFetch(`/api/tasks/${encodeURIComponent(id)}/status`, {
-      method: 'PATCH',
-      body: JSON.stringify(body),
-    }),
-    delete: (id, projectId) => {
-      const qs = projectId ? `?projectId=${encodeURIComponent(projectId)}` : '';
-      return authenticatedFetch(`/api/tasks/${encodeURIComponent(id)}${qs}`, {
-        method: 'DELETE',
-      });
-    },
-    getSettings: () => authenticatedFetch('/api/tasks/settings'),
-    updateSettings: (body) => authenticatedFetch('/api/tasks/settings', {
-      method: 'PUT',
-      body: JSON.stringify(body),
-    }),
-    getStats: () => authenticatedFetch('/api/tasks/stats'),
-  },
-
   // Generic GET method for any endpoint
   get: (endpoint) => authenticatedFetch(`/api${endpoint}`),
 

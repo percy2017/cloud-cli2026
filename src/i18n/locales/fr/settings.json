@@ -481,7 +481,7 @@
       "unofficialTitle": "Autres plugins",
       "unofficialDescription": "Plugins non officiels et intégrations d'autres utilisateurs. Examinez le code source avant d'installer."
     },
-    "starterPlugin": {
+    "projectStatsPlugin": {
       "name": "Statistiques du projet",
       "badge": "démarrage",
       "description": "Nombre de fichiers, lignes de code, répartition par type de fichier et activité récente pour votre projet.",
