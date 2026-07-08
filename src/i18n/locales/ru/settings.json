@@ -93,7 +93,8 @@
     "tasks": "Задачи",
     "notifications": "Уведомления",
     "plugins": "Плагины",
-    "about": "О программе"
+    "about": "О программе",
+    "minimax": "MiniMax"
   },
   "notifications": {
     "title": "Уведомления",

@@ -94,7 +94,8 @@
     "computer": "计算机使用",
     "notifications": "通知",
     "plugins": "插件",
-    "about": "关于"
+    "about": "关于",
+    "minimax": "MiniMax"
   },
   "notifications": {
     "title": "通知",

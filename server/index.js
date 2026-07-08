@@ -67,6 +67,7 @@ import voiceRoutes from './voice-proxy.js';
 import browserUseRoutes from './modules/browser-use/browser-use.routes.js';
 import browserUseMcpRoutes from './modules/browser-use/browser-use-mcp.routes.js';
 import { browserUseService } from './modules/browser-use/browser-use.service.js';
+import minimaxRoutes from './modules/minimax/minimax.routes.js';
 import { startEnabledPluginServers, stopAllPlugins, getPluginPort } from './utils/plugin-process-manager.js';
 import { initializeDatabase, projectsDb, sessionsDb } from './modules/database/index.js';
 import { inspectSqliteFile, readSqliteTableRows, SqliteInspectorError } from './modules/sqlite/index.js';
@@ -221,6 +222,9 @@ app.use('/api/browser-use-mcp', browserUseMcpRoutes);
 
 // Browser API Routes (protected)
 app.use('/api/browser-use', authenticateToken, browserUseRoutes);
+
+// MiniMax managed MCP (protected)
+app.use('/api/minimax', authenticateToken, minimaxRoutes);
 
 // Unified provider MCP routes (protected)
 app.use('/api/providers', authenticateToken, providerRoutes);

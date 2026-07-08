@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this project is
 
-CloudCLI (npm: `@cloudcli-ai/cloudcli`, formerly `claudecodeui`) is a web/desktop UI for Claude Code, Cursor CLI, Codex, and Gemini CLI. It is a Vite + React frontend served by an Express backend, packaged as an Electron desktop app, and shipped as a single npm binary (`cloudcli`).
+CloudCLI (npm: `@cloudcli-ai/cloudcli`, formerly `claudecodeui`) is a web/desktop UI for Claude Code, Cursor CLI, Codex, Gemini CLI, and OpenCode. It is a Vite + React frontend served by an Express backend, packaged as an Electron desktop app, and shipped as a single npm binary (`cloudcli`).
 
 ## Common commands
 
@@ -179,6 +179,16 @@ El script `scripts/fix-server-native-modules.js` está siendo refactorizado para
 
 > Cualquier cambio que toque código, dependencias o Node → **`./scripts/update.sh`**. Si necesitas `npm` directo, **`PATH=/opt/node22/bin:$PATH npm ...`**. Nunca `npm install` con el `PATH` por defecto del host.
 
+### Quién compila y reinicia PM2 — el usuario, no Claude
+
+Por convención de este proyecto, **Claude nunca corre `pm2 restart`, `npm install`, `npm run build`, ni `./scripts/update.sh` por su cuenta**. Después de cada cambio de código, dependency bump, o movimiento de Node, terminamos la respuesta diciéndole al usuario qué comando correr (`./scripts/update.sh` o equivalente con `PATH=/opt/node22/bin:$PATH`), y él se encarga de aplicarlo y verificar el health check. Esto evita:
+
+- Romper una sesión de PM2 en medio de una sesión larga sin manera fácil de recuperarla.
+- Doble restart (Claude hace uno, el usuario hace otro) que oculta si el fix realmente funcionó.
+- Mezclar el postinstall nativo con el restart (orden importa: `npm ci` → `fix:native` → `build` → `pm2 restart`).
+
+Si el usuario explícitamente te autoriza ("dale, reiniciá PM2", "compilá"), entonces procedés. Si no, terminá con: *"Cuando corras `./scripts/update.sh`, vas a ver… (lo que esperás ver)"*.
+
 ### Tests
 
 There is **no top-level `npm test`**. Tests are colocated `*.test.ts` / `*.test.js` next to the files they cover and are run with `tsx` or `node --test` (no test framework is configured in `package.json`). Run them directly, e.g.:
@@ -191,6 +201,8 @@ node --test server/services/tests/notification-orchestrator.test.js
 ```
 
 Backend tests live under `server/**/tests/**`. Frontend tests are rare; one Vitest-style example is `src/components/chat/tools/components/ContentRenderers/QuestionAnswerContent.test.tsx`.
+
+> **Path trick**: the backend `@/*` alias only resolves from inside `server/`. Tests that import `@/modules/...` MUST be run from `cd server` (or with the test runner rooted there), e.g. `cd /opt/cloud-cli2026/server && npx tsx --test modules/minimax/tests/minimax.service.test.ts`. Running from the repo root produces `ERR_MODULE_NOT_FOUND: Cannot find package '@/modules'`.
 
 ## Architecture
 
@@ -234,10 +246,11 @@ Current modules:
 
 - `modules/database/` — SQLite (`better-sqlite3`). Repositories live in `repositories/` (`projects.db.ts`, `sessions.db.ts`, `users.ts`, `credentials.ts`, `api-keys.ts`, etc.). Schema in `schema.ts`, migrations in `migrations.ts`. The `db` import re-exported from `index.ts` is the canonical entry point.
 - `modules/projects/` — project CRUD, clone, star, TaskMaster detection, plus the `projects-with-sessions-fetch.service.ts` that broadcasts `loading_progress` over `/ws`.
-- `modules/providers/` — the **provider registry**. The full guide for adding a provider lives in `server/modules/providers/README.md`; the short version: each provider exposes `auth`, `models`, `mcp`, `skills`, `sessions`, `sessionSynchronizer` facets and lives under `list/<provider>/<provider>.*.provider.ts`. Register new providers in `provider.registry.ts` and update the type unions in both `server/shared/types.ts` and `src/types/app.ts`. Current providers: `claude`, `codex`, `cursor`, `gemini`, `opencode`.
+- `modules/providers/` — the **provider registry**. The full guide for adding a provider lives in `server/modules/providers/README.md`; the short version: each provider exposes `auth`, `models`, `mcp`, `skills`, `sessions`, `sessionSynchronizer` facets and lives under `list/<provider>/<provider>.*.provider.ts`. Register new providers in `provider.registry.ts` and update the type unions in both `server/shared/types.ts` and `src/types/app.ts`. Current providers: `claude`, `codex`, `cursor`, `gemini`, `opencode`, `qwen` (Qwen integration is staged via tasks #87-#96 — Phase 0 doc complete, code phases pending).
 - `modules/websocket/` — owns the single `ws` server. The README in that folder documents the message envelope, the per-run `seq` event log, the PTY lifecycle for `/shell`, and the plugin WebSocket proxy.
 - `modules/notifications/` — web-push + notification preferences + notification orchestration.
 - `modules/browser-use/` — Browser-Use MCP integration; owns its own routes (`browser-use.routes.ts`, `browser-use-mcp.routes.ts`) and service. **Per-chat-run session lifecycle:** each chat run gets its own auto-created `BrowserUseSession` (one per run, reused across tool calls, closed when the run completes) correlated via a sidecar file at `~/.cloudcli/browser-use/current-chat-run.json` written by `modules/websocket/services/chat-run-registry.service.ts` on `startRun` and cleared on `completeRun`. The MCP stdio server at `server/browser-use-mcp.ts` reads the sidecar with a 1s TTL cache and injects `chatRunId` into every tool call so the HTTP bridge in `browser-use-mcp.routes.ts` can resolve or auto-create the right session. **Live WebSocket broadcast:** every session mutation is pushed to the UI via three extra `GatewayEventKind` values — `browser_use_session_created`, `browser_use_session_updated`, `browser_use_session_closed` (declared in `server/shared/types.ts`, consumed by `src/components/browser-use/view/BrowserUsePanel.tsx` via `useWebSocket().subscribe`). Backward-compatible: existing MCP tools that pass `sessionId` directly keep working; the auto-management is additive.
+- `modules/minimax/` — **MiniMax Token Plan MCP** (`web_search` + `understand_image` via the upstream `minimax-coding-plan-mcp` PyPI package). Unlike `browser-use`, MiniMax talks to its own public API directly — there is no HTTP bridge, only a single REST surface for `GET/PUT /api/minimax/{settings,status}`. The user registers the `MINIMAX_API_KEY` (plaintext, same trust level as `browser_use_mcp_token`) in `app_config` row `minimax_settings`; on toggle-on the service writes `cloudcli-minimax` to every provider's MCP config via `providerMcpService.addMcpServerToAllProviders`. Credentials UI lives in **Settings → API & tokens** (`MiniMaxCredentialsSection`) — the toggle + status pills live in **Settings → MiniMax** (`MiniMaxSettingsTab`), which links back to the credentials tab when the key is missing. Full architecture diagram in `docs/mcp/minimax.md`.
 
 ### Frontend layout (`src/`)
 
@@ -358,6 +371,14 @@ MCP servers whose name starts with `cloudcli-` are owned by CloudCLI itself — 
 8. **Settings persistence** in `app_config` keys: `<name>_settings` (feature toggle + any extra fields you need), `<name>_mcp_token`. Domain state can live elsewhere — for `cloudcli-browser-use` it lives in SQLite and per-chat-run sidecar files; pick the storage that fits the feature.
 
 To add a new managed MCP: copy a sibling (`browser-use` is the most complete example), pick a `cloudcli-<feature>` name, and follow the eight steps above. i18n strings `settings.mcpServers.managed.{badge,hint}` and the read-only badge UI in `src/components/mcp/view/McpServers.tsx#isManagedServer` are already in place — the prefix check is the only "magic" you need.
+
+### Variante: managed MCP sin HTTP bridge (`cloudcli-minimax`)
+
+El patrón completo de ocho pasos aplica cuando CloudCLI actúa de proxy entre el agente y un servicio externo (`browser-use` es el ejemplo canónico). **Pero** hay managed MCPs donde el upstream package habla directo con su propia API pública — en ese caso se omiten los pasos 2, 3, y 5 (stdio wrapper, sidecar, CLI subcommand):
+
+- `server/modules/minimax/` — `cloudcli-minimax` envuelve el PyPI `minimax-coding-plan-mcp` que expone `web_search` y `understand_image`. El package habla directo con `https://api.minimax.io` usando la `MINIMAX_API_KEY` que el usuario pega. No hay bridge HTTP, no hay sidecar de chat-run, no hay CLI subcommand — solo `minimax.service.ts` + `minimax.routes.ts` + la lógica de registrar/quitar el MCP en los providers vía `providerMcpService`.
+
+Si en el futuro agregás un MCP similar (package upstream ya habla HTTP por su cuenta), seguí el patrón de `minimax/` en vez del de `browser-use/`. La regla mental: **¿CloudCLI necesita intermediar entre el agente y el servicio upstream?** Sí → patrón `browser-use` (completo). No → patrón `minimax` (mínimo).
 
 ## Task queue (external plugin only)
 

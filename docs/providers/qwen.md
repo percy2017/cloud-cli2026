@@ -106,13 +106,25 @@ Plus the chat runtime spawner at the server root (parallel to `server/opencode-c
 Mirror `server/opencode-cli.js:85-319`. Concretely:
 
 - `const spawnFunction = process.platform === 'win32' ? crossSpawn : spawn;`
-- Args assembled before spawn (analogue of `opencode-cli.js:195-219`):
+- **Flags confirmed by Phase-0 probing** (`qwen --help`, v0.19.7):
+  - `--output-format [choices: "text", "json", "stream-json"]` — **NO `--include-partial-messages`** flag exists (unlike Claude). `stream-json` is plain NDJSON, one event per line; `json` wraps the whole run as a single array.
+  - `-c, --continue [boolean]` — resume most recent session for the current cwd.
+  - `-r, --resume <string>` — resume a specific session by id; without id shows session picker.
+  - `-m, --model <string>` — overrides `settings.json#model.name` for this run.
+  - `--fallback-model <string[]>` — repeatable, max 3.
+  - `-p, --prompt <string>` — appended to input on stdin (if any).
+  - `-s, --sandbox [boolean]` — run in qwen's own sandbox (not Claude's).
+  - `--safe-mode [boolean]` — disables context files / hooks / extensions / skills / MCP for troubleshooting.
+  - `--bare [boolean]` — skip implicit startup auto-discovery; only honor explicit CLI inputs.
+  - `--proxy <schema://user:pw@host:port>` — proxy for Qwen Code (deprecated → settings.json `proxy`).
+  - `--insecure [boolean]` — skip TLS (lab only).
+  - `--chat-recording [boolean]` — when false, history not saved; `-c/-r` won't work.
+- Args assembled before spawn (corrected from `--include-partial-messages`):
   ```js
-  const args = ['--output-format', 'stream-json', '--include-partial-messages'];
+  const args = ['--output-format', 'stream-json'];
   if (sessionId) args.push('--resume', sessionId);
   else if (continueLast) args.push('--continue');
   if (resolvedModel) args.push('--model', resolvedModel);
-  if (approvalMode) args.push('--approval-mode', approvalMode);
   if (sandboxMode) args.push('--sandbox');
   args.push(command?.trim() ?? '');   // empty for sessions without a fresh prompt
   ```
@@ -138,6 +150,12 @@ the runtime is wired in via the standard `spawnFns.qwen` slot in
 [`server/index.js:117-130`](../../server/index.js#L117) (analogue: opencode at
 `server/index.js:118`).
 
+### Verified by Phase 0
+
+- `which qwen` → `/root/.local/bin/qwen`
+- `qwen --version` → `0.19.7`
+- `qwen -p "hola" --output-format stream-json` → emits NDJSON with `system.init`, `assistant.thinking`, `assistant.text`, `result.success` events.
+
 ### Subprocess vs `qwen serve` daemon
 
 `qwen serve` (Stage 1 experimental `--http-bridge` flag) exposes the agent as an
@@ -162,76 +180,186 @@ question for the follow-up UX pass).
 
 ## 5. Event protocol — `qwen --output-format stream-json` shape
 
-Emit schema per docs (`qwen -p "..." --output-format stream-json
---include-partial-messages`). Event types confirmed by the binario (`cli.js`)
-and `chunks/agent-headless-VLX4C7KX.js`:
+**Phase 0 (v0.19.7) confirmed event names — verbatim shapes captured from a
+live spawn** (`qwen -p "hola" --output-format stream-json`):
 
-| Event type | Meaning | → NormalizedMessage kind | First iteration? |
+### Per-event shapes (NDJSON, one per line)
+
+| Event `type` | Required fields | Optional fields | → NormalizedMessage kind |
 |---|---|---|---|
-| `system` (subtypes `session_start`, `compact_boundary`, …) | session lifecycle | `status` / `session_created` | Yes |
-| `assistant` (with `message.content[]` or `delta`) | model output | `stream_delta` / `text` | Yes |
-| `user` | echoed user message | (echo — skip or pass-through) | Yes |
-| `tool_use` | tool invocation | `tool_use` | Yes |
-| `tool_result` | tool result | `tool_result` | Yes |
-| `thinking` | reasoning | `thinking` | Yes |
-| `result` (subtypes `success`/`error`, `duration_ms`, `usage`) | run-end | `stream_end` | Yes |
-| `error` | error | `error` | Yes |
-| `permission_request` | approval UI | `permission_request` | **Deferred** — see [section 18](#18-interactive-prompts-ui-planned) |
-| `permission_cancelled` | denied | `permission_cancelled` | **Deferred** — see [section 18](#18-interactive-prompts-ui-planned) |
+| `system`, `subtype:"init"` | `uuid`, `session_id`, `cwd`, `tools[]`, `mcp_servers[]`, `model`, `permission_mode`, `slash_commands[]`, `qwen_code_version`, `agents[]` | — | `session_created` (first iteration — tracks model, available tools, agents, MCP) |
+| `assistant` | `uuid`, `session_id`, `message.{id,role:"assistant",model,content[]}` | `parent_tool_use_id`, `message.usage` | frame-by-frame map of `message.content[]` (see below) |
+| `user` (echoed user turn) | `uuid`, `session_id`, `message.{role:"user",content[]}` | `parent_tool_use_id` | pass-through (or skip — same as opencode) |
+| `user` with `tool_result` | same as above, but `message.content[]` has items `{type:"tool_result",tool_use_id,is_error,content}` | — | `tool_result`, linked to prior `tool_use` by `tool_use_id` |
+| `result`, `subtype:"success"` | `uuid`, `session_id`, `is_error`, `duration_ms`, `duration_api_ms`, `num_turns`, `result` (string), `usage` (`input_tokens`, `output_tokens`, `cache_read_input_tokens`, `total_tokens`) | `permission_denials[]`, `stats.{models,tools,files,skills}` | `stream_end` (single terminal event) |
+| `result`, `subtype:"error_max_turns"` / `"error"` | same + `is_error:true`, error payload | — | `stream_end` with `kind: 'error'` |
 
-**Defensive normalization:** the `QwenSessionsProvider.normalizeMessage()` must
-mirror the opencode precedent at
-[`opencode-sessions.provider.ts:222-319`](../../server/modules/providers/list/opencode/opencode-sessions.provider.ts#L222)
-and return `[]` for unrecognised event types — never crash. This matters
-specifically for qwen because (a) the CLI is third-party and may evolve the
-event schema between minor versions, and (b) qwen may emit native tools with
-unrecognised names (precedent: OpenCode's `question` tool, see
-[`docs/providers/opencode.md#interactive-prompts-ui--the-question-tool-gap`](./opencode.md#interactive-prompts-ui--the-question-tool-gap)).
-Fall back to `kind: 'error'` with `text: 'unparsed_line' + raw` for shapes
-the normalizer cannot map.
+### `message.content[]` for `assistant` events
 
-The exact field names (`session_id` vs `sessionId`, `message.content[]` vs
-`message.content`) are **Phase-0 discovery** items (verify by running the
-binary with `--include-partial-messages`). First PR normalization should map
-the most common types and emit `kind: 'error'` with `text: 'unparsed_line' +
-raw` as a fallback for unexpected shapes, mirror
-[`opencode-sessions.provider.ts:222-319`](../../server/modules/providers/list/opencode/opencode-sessions.provider.ts#L222)'s
-defensive shape.
+Each item is one of:
+- `{type:"thinking", thinking:"..."}` → `kind: 'thinking'`
+- `{type:"text", text:"..."}` → `kind: 'text'`
+- `{type:"tool_use", id:"call_function_xxx", name:"grep_search"|"read_file"|"ask_user_question"|..., input:{...}}` → `kind: 'tool_use'`
+
+**No `delta` events.** Unlike Claude's `--include-partial-messages`, qwen emits
+each `assistant` event with the complete `content[]` array for that turn.
+Streaming UX = `stream_delta` per `assistant` frame, not per token. Document
+this as a qwen limitation in the comparison table.
+
+### `result.stats.*` (free telemetry)
+
+```json
+{
+  "stats": {
+    "models": { "<model-name>": { "api": {...}, "tokens": {...}, "bySource": {...} } },
+    "tools":  { "totalCalls": 12, "totalSuccess": 12, "byName": { "grep_search": {...} } },
+    "files":  { "totalLinesAdded": 0, "totalLinesRemoved": 0 },
+    "skills": { "totalCalls": 0, "totalSuccess": 0, "byName": {} }
+  }
+}
+```
+
+`QwenSessionsProvider` maps `stats.models.<model>.tokens.{input,output,cached,total}`
+directly into the WebSocket `usage` block — no need to scrape `usage` events.
+`stats.tools.byName` is useful for the token-usage dashboard.
+
+### `permission_denials[]` (free telemetry)
+
+Empty array in all our probes (qwen does not block tools in non-interactive mode).
+Map each entry as `kind: 'error'` with `text: 'permission_denied: <tool>'` if
+non-empty — useful as a signal that the user's `permission_mode` is too strict.
+
+### Tool names that qwen supports (from `tools[]` in init event)
+
+`grep_search`, `read_file`, `glob`, `list_directory`, `web_fetch`, `cron_create`,
+`cron_list`, `cron_delete`, `loop_wakeup`, `agent`, `task_stop`, `send_message`,
+`read_mcp_resource`, `tool_search`, `skill`, `ask_user_question`, `exit_plan_mode`,
+`enter_plan_mode`, `enter_worktree`, `exit_worktree`, plus
+`computer_use__<action>` (37 computer-use tools).
+
+**CloudCLI already recognizes most of these** from Claude (same names by design —
+qwen forked Claude's tool surface). No new `ToolRenderer` registrations needed
+in MVP except `skill` if we want to render skill invocations separately.
+
+### Deferred events (Phase 0 + first iteration)
+
+| Event type | → NormalizedMessage kind | First iteration? |
+|---|---|---|
+| `permission_request` | `permission_request` | **Deferred** — see [§ 18](#18-interactive-prompts-ui-planned) |
+| `permission_cancelled` | `permission_cancelled` | **Deferred** — see [§ 18](#18-interactive-prompts-ui-planned) |
+| `ask_user_question` tool_use (in assistant.content[]) | `tool_use` with `name: 'ask_user_question'` | **Deferred** — qwen's `-p` mode refuses to invoke it (verified: "The `ask_user_question` tool is unavailable in the current non-interactive mode"). Would require `qwen serve --http-bridge` (Stage 1 experimental) for real interactivity. |
+| `exit_plan_mode` tool_use | `tool_use` with `name: 'exit_plan_mode'` | **Deferred** — same reason. |
+| `system`, `subtype:"compact_boundary"` | `status` | Phase 2 (no schema yet) |
+| `system`, `subtype:"session_start"` | `session_started` | Phase 2 |
+
+### Defensive normalization
+
+`QwenSessionsProvider.normalizeMessage()` must mirror opencode at
+[`opencode-sessions.provider.ts:222-319`](../../server/modules/providers/list/opencode/opencode-sessions.provider.ts#L222):
+return `[]` for unrecognised event types — never crash. This matters specifically
+because (a) the CLI is third-party and may evolve the schema between minor
+versions and (b) qwen emits all 37 `computer_use__*` tools in `init.tools[]`
+even when unused. Fall back to `kind: 'error'` with `text: 'unparsed_line: ' + JSON.stringify(raw).slice(0,200)` for shapes the normalizer cannot map.
 
 ## 6. Auth & environment
 
-**Credential resolution priority** (highest first):
+**Phase 0 reality (`qwen --help`):** there is **NO login subcommand**.
 
-1. `~/.qwen/settings.json#security.auth.apiKey` (or whatever Phase-0 confirms).
-2. Environment variables (per docs):
-   - `OPENAI_API_KEY` (+ `OPENAI_BASE_URL`, `OPENAI_MODEL`)
-   - `ANTHROPIC_API_KEY` (+ `ANTHROPIC_BASE_URL`, `ANTHROPIC_MODEL`)
-   - `GEMINI_API_KEY` (+ `GEMINI_MODEL`)
-   - `BAILIAN_CODING_PLAN_API_KEY` (Qwen Coding Plan, base URL `coding.dashscope.aliyuncs.com/v1`)
-3. `.qwen/.env` → `.env` → `~/.qwen/.env` → `~/.env` (per docs resolution order).
-
-**Multi-source cascade pattern.** The implementation must follow the **3-source
-cascade** pattern established by codex in
-[`codex-auth.provider.ts:64-75`](../../server/modules/providers/list/codex/codex-auth.provider.ts#L64):
-walk each credential source in priority order, return the first hit, and only
-emit the literal `'Qwen not configured'` (or equivalent) when **all sources are
-empty or missing**. Each source must be a separate helper method
-(`readSettingsJson()`, `readEnvCredentials()`, etc.) so the test suite can patch
-each in isolation — see [`codex-auth.test.ts`](../../server/modules/providers/tests/codex-auth.test.ts)
-for the colocated-test pattern (10 cases, including the "all sources empty"
-negative case).
-
-**Install detection** (mirror `opencode-auth.provider.ts:31-38`):
-```ts
-spawn.sync('qwen', ['--version'], { stdio: 'ignore', timeout: 5000 });
+```
+qwen auth          Configure authentication (removed)
 ```
 
-**Login UI** — add to `getProviderCommand` in
-[`ProviderLoginModal.tsx:15-53`](../../src/components/provider-auth/view/ProviderLoginModal.tsx#L15):
-```ts
-if (provider === 'qwen') return 'qwen login';  // verify exact subcommand in Phase 0
+`qwen auth` is listed in `--help` only as a deprecation stub. Credentials are
+configured **out-of-band** by writing `~/.qwen/settings.json` (or exporting
+env vars before spawn). Verified in this host:
+
+```json
+{
+  "env": {
+    "QWEN_CUSTOM_API_KEY_ANTHROPIC_HTTPS_API_MINIMAX_IO_ANTHROPIC_36C86C5DB998": "sk-cp-..."
+  },
+  "modelProviders": {
+    "anthropic": [
+      { "id": "MiniMax-M3", "name": "MiniMax-M3", "baseUrl": "https://api.minimax.io/anthropic", "envKey": "..." }
+    ]
+  },
+  "security": { "auth": { "selectedType": "anthropic" } },
+  "model": { "name": "MiniMax-M3", "baseUrl": "https://api.minimax.io/anthropic" }
+}
 ```
-Title: `"Qwen Code CLI Login"`.
+
+### Credential resolution priority (highest first)
+
+The 4-source cascade — `qwen-auth.provider.ts` must walk in this order,
+returning the first hit, and only emit `'Qwen not configured'` when **all are
+empty or missing**:
+
+1. **`~/.qwen/settings.json`** (parsed as JSON5 or via `JSON.parse` for strict
+   hosts):
+   - `security.auth.selectedType === 'anthropic'` → look up
+     `modelProviders.anthropic[0].envKey` and read `env[<that key>]`.
+   - `security.auth.selectedType === 'openai'` / `'gemini'` / `'qwen-oauth'` →
+     analogous lookup in `modelProviders[<type>][0]`.
+   - Each `modelProviders.<type>[]` entry has `{ id, name, baseUrl, envKey }`;
+     `envKey` is the env var that holds the credential (the key in
+     `settings.json#env` is a hash of the baseUrl, not human-readable).
+2. **Environment variables on the CloudCLI process** (verified by Phase 0 probe):
+   - `ANTHROPIC_API_KEY` + `ANTHROPIC_BASE_URL` + `ANTHROPIC_MODEL` (used by this host)
+   - `OPENAI_API_KEY` + `OPENAI_BASE_URL` + `OPENAI_MODEL`
+   - `GEMINI_API_KEY` + `GEMINI_MODEL`
+   - `BAILIAN_CODING_PLAN_API_KEY` (Qwen Coding Plan, base `coding.dashscope.aliyuncs.com/v1`)
+3. **Project-level**: `.qwen/.env`, `.env`, `<project>/.qwen/.env` (per docs
+   resolution order — must use a `.env` parser, e.g. `dotenv`).
+4. **Global**: `~/.qwen/.env`, `~/.env`.
+
+### Multi-source cascade pattern (mandatory)
+
+Mirror `codex-auth.provider.ts:64-75` (10 cases in `codex-auth.test.ts`). Each
+source must be a separate helper (`readSettingsJson()`, `readEnvCredentials()`,
+`readProjectDotenv()`, `readGlobalDotenv()`) so the test suite can patch each
+in isolation. The negative case "all sources empty" must return
+`{ authenticated: false, error: 'Qwen not configured' }`.
+
+### Install detection
+
+```ts
+spawn.sync('qwen', ['--version'], { stdio: 'ignore', timeout: 5000 });   // returns true on this host
+```
+
+`which qwen` was `/root/.local/bin/qwen` in our probe. No `QWEN_CLI_PATH`
+override needed for MVP; users can `ln -s` if their install lives elsewhere.
+
+### Login UI
+
+**There is no `ProviderLoginModal` for qwen.** `getProviderCommand()` in
+[`ProviderLoginModal.tsx:15-53`](../../src/components/provider-auth/view/ProviderLoginModal.tsx#L15)
+must NOT add a `qwen login` case — `qwen auth` is removed and there's no
+fallback verb. Instead, the Settings → Agents → Qwen row shows:
+
+- Status badge: green if at least one source authenticated; red if not.
+- **No "Iniciar sesión" button.** The action button is **"Configurar credenciales"**,
+  opening a `QwenAuthInstructionsModal` (NEW component, mirrors the structure
+  of `ProviderLoginModal` but shows instructions instead of launching a PTY):
+  - Tab 1: "Exportar variables de entorno" — copyable blocks per selected
+    provider (`anthropic` / `openai` / `gemini`).
+  - Tab 2: "Editar `~/.qwen/settings.json`" — shows the current file contents
+    (read-only) + a textarea for edits with "Guardar" button. Write is wrapped
+    in a backup-to-`settings.json.bak` + atomic rename pattern.
+  - Tab 3: "Estado actual" — table with each source × `present`/`missing` and
+    the resolved `selectedType` + `model.name`.
+- For OAuth-style providers (`qwen-oauth`), tab 1 links to the Aliyun
+  console; tab 2 helps the user generate and paste the OAuth token into
+  `settings.json#env[...]`.
+
+This keeps the install detection + runtime path orthogonal to the auth UX:
+runtime spawn reads `settings.json` or env vars; auth UX just **shows** where
+the credentials live and helps the user edit them safely.
+
+### Path safety
+
+All writes to `~/.qwen/settings.json` must go through `utils/safe-write.js`
+(atomic write + chmod 600 + `.bak` rotation) — same guarantees we apply for
+`~/.codex/auth.json`. See the recipe in [`docs/providers/codex.md`](./codex.md#auth-resolution--3-source-cascade).
 
 ## 7. Models
 
@@ -579,22 +707,28 @@ en + es (mirrors in 9 other locales — de, fr, it, ja, ko, ru, tr, zh-CN, zh-TW
 
 `s` is the default locale; mirrors must be exact.
 
-## 13. Open questions (gate before implementation)
+## 13. Open questions (RESOLVED by Phase 0)
 
-1. **Auth subcommand** — is it `qwen login` or `qwen auth <type>` or
-   `qwen --auth`? Verify in Phase 0 via `qwen --help` and `qwen auth --help`.
-2. **`qwen models` subcommand** — does the CLI expose a dynamic model
-   listing, or is the model list static / read from `settings.json`?
-   Verify in Phase 0.
-3. **Event JSON shape** — exact field names for `session_id`,
-   `message.content[]`, `tool_use.input`, `tool_result.output`. Verify
-   in Phase 0 by running
-   `qwen -p "test" --output-format stream-json --include-partial-messages`.
-4. **Permission modes UI** — first iteration: `['default', 'bypassPermissions']`
-   (mirrors opencode). Extend later when we know how users will use
-   the 5-mode CLI (`plan`, `default`, `auto-edit`, `auto`, `yolo`).
-5. **Brand color** — `red` Tailwind palette (Aliyun/Qwen brand red-orange).
-   Confirm with design before merge.
+All original 5 questions resolved against `qwen --version 0.19.7` on this host.
+The matrix below is the new baseline.
+
+| # | Question | Phase-0 answer | Section |
+|---|---|---|---|
+| 1 | Auth subcommand | **`qwen auth (removed)`** — no login verb. Auth = edit `~/.qwen/settings.json` or export env vars. | § 6 |
+| 2 | `qwen models` subcommand | **No** dynamic listing subcommand. Catalog = static `QWEN_FALLBACK_MODELS` + `settings.json#model.name`. | § 7 |
+| 3 | Event JSON shape | NDJSON with `system.init`, `assistant.{thinking,text,tool_use}`, `user.{tool_result}`, `result.{success,error}` + `stats` + `permission_denials`. Field names: `session_id` (snake_case in stream-json events), `message.content[]` array, `tool_use.input`/`tool_use.name`/`tool_use.id`. | § 5 |
+| 4 | Permission modes UI | Qwen CLI has 5 modes (probable: `plan`, `default`, `auto-edit`, `auto`, `yolo` — none documented in `--help`; need a Phase-0.5 probe). MVP first iteration: `['default', 'bypassPermissions']` mirror opencode. Auto-discover the real names via `qwen --help` long-form. | § 12.1 |
+| 5 | Brand color | Tailwind `red` (Aliyun/Qwen red-orange). Confirm with design before merge. | § 12 |
+
+**New questions surfaced by Phase 0 (gated "nice-to-know", not blocking):**
+
+6. **`qwen serve --http-bridge`** — Stage 1 experimental daemon for real
+   interactivity (`ask_user_question`, `exit_plan_mode`). Skip in MVP; revisit
+   when stabilized.
+7. **`qwen channels` / `qwen extensions` / `qwen hooks`** — out of scope (see
+   § 14).
+8. **`qwen --safe-mode`** — useful troubleshooting flag. Surface a toggle in
+   advanced settings later.
 
 ## 14. What is NOT in scope
 
@@ -671,29 +805,74 @@ phases 10-12 (frontend + i18n + tests) ~2-3 days. Total ~1 week.
 
 ## 18. Interactive prompts UI (planned)
 
-In the first iteration, qwen will mirror the **Codex pattern** — capability off,
+**Phase 0 confirmation:** qwen registers `ask_user_question` and
+`exit_plan_mode` in `system.init.tools[]`, but **the CLI refuses to invoke them
+when run non-interactively**:
+
+```
+The `ask_user_question` tool is unavailable in the current non-interactive mode.
+```
+
+This is the same first-iteration restriction as Codex (see
+[`docs/providers/codex.md`](./codex.md)): a real interactive UI requires a
+daemon mode. For qwen, the daemon is `qwen serve --http-bridge` (Stage 1
+experimental). **Out of MVP scope.**
+
+### First-iteration parity with Codex
+
+In the first iteration, qwen mirrors the **Codex pattern** — capability off,
 CLI handles permission decisions internally via spawn flags. Concretely:
 
 - `supportsPermissionRequests: false` in `provider-capabilities.service.ts`.
 - Chat composer shows `<QwenPermissions />` (a thin copy of `<CodexPermissions />`)
   with the same three modes (`default` / `acceptEdits` / `bypassPermissions`).
-- No `<PermissionRequestsBanner />` ever appears for qwen sessions.
-- No `AskUserQuestionPanel` rendered (qwen has no equivalent tool name yet).
+- **No** real-time interactive prompts in MVP: `ask_user_question` and
+  `exit_plan_mode` tool_use events surface as raw JSON in a `Default`
+  collapsible card (same fallback as OpenCode's `question` tool gap documented
+  in [`docs/providers/opencode.md`](./opencode.md)).
+- No `<PermissionRequestsBanner />` ever appears for qwen sessions in MVP.
 
-If qwen-code later exposes a `canUseTool`-style mid-stream callback, the
-permission flow can be enabled the same way Claude's is. The plan-doc does not
-address this; it's a follow-up.
+### Roadmap to close the gap (future work)
 
-## 19. Capabilities & UI support (Qwen row — DRAFT)
+If qwen-code later exposes a `canUseTool`-style mid-stream callback (e.g. via
+`qwen serve --http-bridge` stabilizing), the permission flow can be enabled
+the same way Claude's is:
 
-| Property | Qwen value (planned) | Source |
+1. Add a `qwen-canUseTool`-style hook in `qwen-session-synchronizer.provider.ts`
+   that consumes `permission_request` events and produces
+   `permission_cancelled` / `permission_allowed` events.
+2. Register `QwenAskUserQuestionPanel` and `QwenPlanDisplay` in
+   `PermissionRequestsBanner.tsx` (parallel to `AskUserQuestionPanel`).
+3. Set `supportsPermissionRequests: true` in the `QwenProvider` capability
+   descriptor.
+4. Add column rows to the comparative table in `agente.md`.
+
+Out of MVP; tracked as a follow-up after `qwen serve` exits Stage 1.
+
+## 19. Capabilities & UI support (Qwen row — POST PHASE 0)
+
+**Phase 0 closed all DRAFT markers below.** This row is what `docs/providers/agente.md`
+must mirror when the qwen provider is enabled.
+
+| Property | Qwen value | Source |
 |---|---|---|
-| Login command | (planned) `qwen login` | TBD (Phase 0) |
-| Permission modes | (planned) `['default', 'bypassPermissions']` first iteration (mirrors opencode; CLI has 5 modes — `plan`, `default`, `auto-edit`, `auto`, `yolo` — extended later) | section 12.1 |
-| MCP scopes | (planned) `['user', 'project']` | section 8 |
-| MCP transports | (planned) `['stdio', 'http', 'sse']` | section 8 |
-| `supportsPermissionRequests` | (planned) `false` | mirrors Codex (first iteration) |
-| Interactive UI | (planned) **No** | mirrors Codex |
+| Login command | **None** (`qwen auth (removed)`) — auth = edit `~/.qwen/settings.json` or env vars | § 6 |
+| Auth cascade | **4 sources**: `settings.json → process.env → project dotenv → global dotenv` | § 6 |
+| Permission modes (MVP) | `['default', 'acceptEdits', 'bypassPermissions']` (mirror Codex; qwen CLI real modes `plan`, `default`, `auto-edit`, `auto`, `yolo` deferred) | § 12.1, § 18 |
+| MCP scopes | `['user', 'project']` | § 8 |
+| MCP transports | `['stdio', 'http', 'sse']` | § 8 |
+| `supportsPermissionRequests` | `false` (mirrors Codex first iteration) | § 18 |
+| Interactive UI | **No** (raw JSON fallback; `qwen serve --http-bridge` is Stage 1) | § 18 |
+| `tool_use` renderer | **Rich** (same renderers as Claude — qwen forked Claude's tool surface: `read_file`, `grep_search`, `web_fetch`, etc.) | § 5 |
+| Custom providers | **Yes** — multi-model via `settings.json#modelProviders.<type>[]` with custom `baseUrl` (verified: this host uses `anthropic → api.minimax.io`) | § 6 |
+| Model catalog | **Static** — `QWEN_FALLBACK_MODELS` (no `qwen models` subcommand in 0.19.7) | § 7 |
+| Streaming | **Per-frame** (NDJSON `assistant` events contain full `content[]` of that turn — no token-level deltas) | § 5 |
+| `stats` telemetry | **Yes** — `result.stats.{models,tools,files,skills}` free telemetry; maps to `usage` block | § 5 |
+| Session store | Filesystem JSONL at `~/.qwen/projects/<encoded-cwd>/chats/<session-id>.jsonl` (mirror Claude) | § 10 |
+| Resume flag | `-c/--continue` (boolean, latest) and `-r/--resume <id>` (string) | § 4 |
+| Sandbox | `-s, --sandbox [boolean]` (qwen's own, not Claude's) | § 4 |
+| `chat-recording` | `--chat-recording [boolean]` — false → `-c/-r` won't work | § 4 |
+| Brand color | Tailwind `red` (Aliyun red-orange) — confirm with design before merge | § 12 |
 | `tool_use` renderer | (planned) Rich (same renderers as Claude/Codex) | `toolConfigs.ts` |
 | Custom providers | (planned) Yes — multi-model like OpenCode | TBD |
 | Status | **DRAFT — plan only** | `docs/providers/agente.md` |

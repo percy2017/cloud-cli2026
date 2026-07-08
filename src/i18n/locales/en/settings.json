@@ -110,6 +110,7 @@
     "voice": "Voice",
     "tasks": "Tasks",
     "browser": "Browser",
+    "minimax": "MiniMax",
     "notifications": "Notifications",
     "plugins": "Plugins",
     "about": "About"
@@ -719,6 +720,23 @@
       "completing": "Completing...",
       "completeSetup": "Complete Setup",
       "completeFailed": "Failed to complete onboarding"
+    }
+  },
+  "api": {
+    "minimax": {
+      "title": "MiniMax",
+      "description": "Token Plan API key used by the web_search and understand_image MCP tools.",
+      "loading": "Loading…",
+      "keyLabel": "API key",
+      "keyPlaceholder": "sk-cp-...",
+      "keyHint": "Token Plan key from your MiniMax dashboard.",
+      "hostLabel": "API host",
+      "hostPlaceholder": "https://api.minimax.io",
+      "hostHint": "Base URL of the MiniMax API. Defaults to the public Token Plan host.",
+      "showKey": "Show API key",
+      "hideKey": "Hide API key",
+      "saveButton": "Save",
+      "savedToast": "MiniMax credentials saved."
     }
   }
 }

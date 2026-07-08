@@ -18,7 +18,7 @@ view and gives you the at-a-glance comparison between them.
 | `cursor` | Cursor CLI (subprocess + content-addressed SQLite blobs) | Production | [cursor.md](./cursor.md) |
 | `gemini` | Google Gemini CLI (subprocess + stream-json) | Production | [gemini.md](./gemini.md) |
 | `opencode` | OpenCode CLI (stdio JSONL subprocess, multi-model) | Production | [opencode.md](./opencode.md) |
-| `qwen` | Qwen Code CLI (subprocess + `--output-format stream-json`) | **DRAFT — plan only** | [qwen.md](./qwen.md) |
+| `qwen` | Qwen Code CLI (subprocess + `--output-format stream-json`, NDJSON) | **Phase-0 ready (v0.19.7 probed)** — implementation TBD | [qwen.md](./qwen.md) |
 
 ## Capabilities & UI support matrix
 
@@ -33,7 +33,7 @@ permission mode lands, or a tool renderer is added.
 | `cursor` | `cursor auth login` | `default` \| `acceptEdits` \| `bypassPermissions` (mapped to `-f` / `--allow-command` / `--deny-command`) | `false` | **No** — CLI does not surface interactive prompts; all decisions go through the `-f` flag at runtime | Rich (same `tool_use` renderers) | No | Production |
 | `gemini` | `gemini auth login` | `default` \| `autoEdit` \| `yolo` \| `plan` (mapped to `--approval-mode`) | `false` | **No** — "unlike Claude it has no interactive permission flow — the CLI runs in `--yolo` or auto-edit mode by default" (`docs/providers/gemini.md`) | Rich (same `tool_use` renderers) | No | Production |
 | `opencode` | `opencode auth login` | `['default']` only | `false` | **No** — `supportsPermissionRequests: false`; the CLI never emits a `permission_request` frame | **Partial** — emits `toolName: 'question'` but `TOOL_CONFIGS` only registers `AskUserQuestion`, so it falls back to `Default` collapsible with raw JSON (`docs/providers/opencode.md`) | **Yes** — multi-model catalog via `opencode models`; per-workspace `~/.local/share/opencode/opencode.db` (shared SQLite, queried read-only) | Production |
-| `qwen` | (planned) `qwen login` | (planned) `default` \| `acceptEdits` \| `bypassPermissions` | (planned) `false` | (planned) **No** — first iteration mirrors Codex pattern (capability off) | (planned) Rich (same `tool_use` renderers) | (planned) Yes — multi-model like OpenCode | **DRAFT** |
+| `qwen` | **None** (`qwen auth (removed)` in v0.19.7) — auth = edit `~/.qwen/settings.json` or export env vars | `default` \| `acceptEdits` \| `bypassPermissions` (mirror Codex; qwen's 5 CLI modes — `plan`, `default`, `auto-edit`, `auto`, `yolo` — deferred) | **`false`** | **No** — first iteration mirrors Codex pattern; `ask_user_question`/`exit_plan_mode` are registered in `system.init.tools[]` but blocked in `-p` mode by the CLI itself. `qwen serve --http-bridge` (Stage 1) would be required for real interactivity | **Rich** (same `tool_use` renderers — qwen forked Claude's tool surface: `read_file`, `grep_search`, `web_fetch`, etc.) | **Yes** — multi-model via `settings.json#modelProviders.<type>[]` with custom `baseUrl` (verified on this host: `anthropic → api.minimax.io`) | **Phase-0 ready** |
 
 ### What the matrix hides
 
@@ -63,7 +63,7 @@ permission mode lands, or a tool renderer is added.
 | `cursor` | `cursor auth login` → `~/.cursor/auth.json` | `CURSOR_API_KEY` env | No |
 | `gemini` | `gemini auth login` → `~/.gemini/` OAuth tokens | `GEMINI_API_KEY` / `GOOGLE_API_KEY` env | No |
 | `opencode` | `opencode auth login` → `~/.local/share/opencode/auth.json` | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GOOGLE_GENERATIVE_AI_API_KEY` / `GEMINI_API_KEY` / `GROQ_API_KEY` / `OPENROUTER_API_KEY` env (covers all bundled providers) | **Yes** (multi-model) |
-| `qwen` | (planned) `qwen login` → `~/.qwen/` | (planned) `QWEN_API_KEY` env | (planned) Yes |
+| `qwen` | `~/.qwen/settings.json` (env block + `security.auth.selectedType` + `modelProviders.<type>[]`) | `process.env.{ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, BAILIAN_CODING_PLAN_API_KEY}` + `<project>/.qwen/.env` + `~/.qwen/.env` + `~/.env` (4-source cascade) | **Yes** (custom `baseUrl` per type, verified with `api.minimax.io/anthropic` on this host) |
 
 See [`docs/voice.md`](../voice.md) for the orthogonal voice feature (STT/TTS, not
 provider-scoped).

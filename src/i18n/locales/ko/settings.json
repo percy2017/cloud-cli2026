@@ -93,7 +93,8 @@
     "tasks": "작업",
     "notifications": "알림",
     "plugins": "플러그인",
-    "about": "정보"
+    "about": "정보",
+    "minimax": "MiniMax"
   },
   "notifications": {
     "title": "알림",
