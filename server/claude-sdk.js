@@ -751,7 +751,18 @@ async function queryClaudeSDK(command, options = {}, ws) {
     // Complete
 
   } catch (error) {
-    console.error('SDK query error:', error);
+    // The Anthropic SDK reports sessions that ended on `stop_reason: tool_use`
+    // (a normal continuation, not a failure) as `ede_diagnostic` errors with
+    // `result_type=user` and no content. These are not real errors — the run
+    // will resume on the next user message — so demote them to warn. Anything
+    // else stays at error level.
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const isEdeDiagnostic = /ede_diagnostic/.test(errorMessage);
+    if (isEdeDiagnostic) {
+      console.warn('SDK query ended with ede_diagnostic (continuation, not a failure):', errorMessage);
+    } else {
+      console.error('SDK query error:', error);
+    }
 
     // Clean up session on error
     if (capturedSessionId) {

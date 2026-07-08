@@ -246,6 +246,32 @@ function normalizeRepositoryRelativeFilePath(filePath) {
     .trim();
 }
 
+// Recognized Conventional Commits types (matches `@commitlint/config-conventional`).
+// Keep in sync with `commitlint.config.js`.
+const CONVENTIONAL_COMMIT_TYPES = [
+  'feat', 'fix', 'docs', 'style', 'refactor',
+  'perf', 'test', 'build', 'ci', 'chore', 'revert',
+];
+const CONVENTIONAL_COMMIT_PREFIX_REGEX = new RegExp(
+  `^\\s*(?:${CONVENTIONAL_COMMIT_TYPES.join('|')})(?:\([^)]+\))?!?:\\s`,
+  'i',
+);
+
+/**
+ * Returns the input message unchanged if it already starts with a Conventional
+ * Commits type prefix (e.g. "feat: …", "fix(ui): …"). Otherwise prepends
+ * "chore: " so the project's commitlint hook accepts it. This lets the user
+ * type a free-form description in the UI and still get a clean commit.
+ */
+function ensureConventionalCommitPrefix(rawMessage) {
+  const message = String(rawMessage ?? '').trim();
+  if (!message) return message;
+  if (CONVENTIONAL_COMMIT_PREFIX_REGEX.test(message)) {
+    return message;
+  }
+  return `chore: ${message}`;
+}
+
 function parseStatusFilePaths(statusOutput) {
   return statusOutput
     .split('\n')
@@ -720,18 +746,26 @@ async function ensureRemoteMatchesDb(projectId, projectPath) {
 // Commit changes
 router.post('/commit', async (req, res) => {
   const { project, message, files } = req.body;
-  
+
   if (!project || !message || !files || files.length === 0) {
     return res.status(400).json({ error: 'Project name, commit message, and files are required' });
   }
 
+  // Auto-prefix with "chore: " if the user typed a message that does not start
+  // with a Conventional Commits type. The project's commitlint config rejects
+  // any subject that doesn't begin with a recognized type, so silently fixing
+  // the most common case (free-form text) lets the user commit without
+  // learning the convention. Explicitly prefixed messages (e.g. "feat: …") are
+  // left untouched.
+  const normalizedMessage = ensureConventionalCommitPrefix(message);
+
   try {
     const projectPath = await getActualProjectPath(project);
-    
+
     // Validate git repository
     await validateGitRepository(projectPath);
     const repositoryRootPath = await getRepositoryRootPath(projectPath);
-    
+ 
     // Stage selected files. Skip files whose pathspec doesn't match
     // (e.g. file removed from disk between status and commit, or .gitignore'd).
     const skippedFiles = [];
@@ -763,7 +797,7 @@ router.post('/commit', async (req, res) => {
     }
 
     // Commit with message
-    const { stdout } = await spawnAsync('git', ['commit', '-m', message], { cwd: repositoryRootPath });
+    const { stdout } = await spawnAsync('git', ['commit', '-m', normalizedMessage], { cwd: repositoryRootPath });
 
     res.json({
       success: true,
@@ -773,7 +807,58 @@ router.post('/commit', async (req, res) => {
     });
   } catch (error) {
     console.error('Git commit error:', error);
-    res.status(500).json({ error: error.message });
+
+    // Surface the real reason to the client. `error.message` is just
+    // "Command failed: git commit -m …" — the actual failure (commitlint
+    // hook rejection, missing git identity, pre-commit lint failure, …)
+    // lives in stderr/stdout. Mirror the diagnostics that /initial-commit
+    // and /publish already expose, and translate the most common patterns
+    // into actionable messages.
+    const stderrText = String(error?.stderr || '').trim();
+    const stdoutText = String(error?.stdout || '').trim();
+    const combined = `${error?.message || ''}\n${stderrText}\n${stdoutText}`;
+
+    // commitlint (via husky commit-msg) requires Conventional Commits.
+    // The raw stderr dumps the full hook output; extract just the human
+    // reason so the UI can render a clean toast.
+    const commitlintSubjectMatch = stderrText.match(/subject may not be empty \[subject-empty\]/);
+    const commitlintTypeMatch = stderrText.match(/type may not be empty \[type-empty\]/);
+    if (commitlintSubjectMatch || commitlintTypeMatch) {
+      return res.status(400).json({
+        error: 'Commit message rejected by commitlint',
+        details: 'The commit message must follow Conventional Commits: `type(scope): subject`. ' +
+                 'Valid types: feat, fix, docs, style, refactor, perf, test, build, ci, chore. ' +
+                 'Example: `feat: add mobile UI improvements`.',
+        stderr: stderrText ? stderrText.slice(0, 2000) : undefined,
+      });
+    }
+
+    if (/please tell me who you are|unable to auto-detect email address/i.test(combined)) {
+      return res.status(400).json({
+        error: 'Git identity not configured',
+        details: 'Set your git name and email in Settings → Git Configuration (or run `git config --global user.name "<name>"` and `git config --global user.email "<email>"`), then try again.',
+        stderr: stderrText ? stderrText.slice(0, 2000) : undefined,
+        stdout: stdoutText ? stdoutText.slice(0, 2000) : undefined,
+      });
+    }
+
+    if (/nothing to commit/i.test(combined)) {
+      return res.status(400).json({
+        error: 'Nothing to commit',
+        details: 'All selected files are already committed (no staged or working-tree changes).',
+        stderr: stderrText ? stderrText.slice(0, 2000) : undefined,
+        stdout: stdoutText ? stdoutText.slice(0, 2000) : undefined,
+      });
+    }
+
+    res.status(500).json({
+      error: error.message,
+      details: stderrText
+        ? `${error.message}\n\n${stderrText}`
+        : error.message,
+      stderr: stderrText ? stderrText.slice(0, 2000) : undefined,
+      stdout: stdoutText ? stdoutText.slice(0, 2000) : undefined,
+    });
   }
 });
 

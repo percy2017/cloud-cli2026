@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useGitPanelController } from '../hooks/useGitPanelController';
 import { useRevertLocalCommit } from '../hooks/useRevertLocalCommit';
 import type { ConfirmationRequest, GitPanelProps, GitPanelView } from '../types/types';
@@ -12,6 +12,26 @@ import GitViewTabs from '../view/GitViewTabs';
 import ConfirmActionModal from '../view/modals/ConfirmActionModal';
 
 export default function GitPanel({ selectedProject, isMobile = false, onFileOpen }: GitPanelProps) {
+  // `selectedProject` from `useProjectsState` is rebuilt on every
+  // `session_upserted` (the server pushes per-session deltas on every Claude
+  // tool call), so the project object identity changes once per tool call
+  // even when the user is sitting on the git tab doing nothing. That cascade
+  // re-runs every useEffect in the controller and re-fetches `/api/git/status`
+  // on each tool invocation.
+  //
+  // Stabilize the project shape we hand to the controller by stripping the
+  // `sessions` array (the only field that mutates with every event). Once
+  // `projectId`/`fullPath` are stable, all the `useEffect(..., [projectId,
+  // fullPath])` hooks in the controller stay quiet.
+  const stableProject = useMemo(() => {
+    if (!selectedProject) return null;
+    return {
+      ...selectedProject,
+      sessions: [], // intentionally empty; the git panel never reads them
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProject?.projectId, selectedProject?.fullPath]);
+
   const [activeView, setActiveView] = useState<GitPanelView>('changes');
   const [wrapText, setWrapText] = useState(true);
   const [hasExpandedFiles, setHasExpandedFiles] = useState(false);
@@ -54,7 +74,7 @@ export default function GitPanel({ selectedProject, isMobile = false, onFileOpen
     initRepository,
     openFile,
   } = useGitPanelController({
-    selectedProject,
+    selectedProject: stableProject,
     activeView,
     onFileOpen,
   });
@@ -62,7 +82,7 @@ export default function GitPanel({ selectedProject, isMobile = false, onFileOpen
   const { isRevertingLocalCommit, revertLatestLocalCommit } = useRevertLocalCommit({
     // `projectId` (DB primary key) is forwarded to the revert API which uses it
     // as the `project` body param.
-    projectId: selectedProject?.projectId ?? null,
+    projectId: stableProject?.projectId ?? null,
     onSuccess: refreshAll,
   });
 
@@ -79,7 +99,7 @@ export default function GitPanel({ selectedProject, isMobile = false, onFileOpen
 
   const changeCount = getChangedFileCount(gitStatus);
 
-  if (!selectedProject) {
+  if (!stableProject) {
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground">
         <p>Select a project to view source control</p>
@@ -132,9 +152,9 @@ export default function GitPanel({ selectedProject, isMobile = false, onFileOpen
 
           {activeView === 'changes' && (
             <ChangesView
-              key={selectedProject.fullPath}
+              key={stableProject.fullPath}
               isMobile={isMobile}
-              projectPath={selectedProject.fullPath}
+              projectPath={stableProject.fullPath}
               gitStatus={gitStatus}
               gitDiff={gitDiff}
               isLoading={isLoading}

@@ -365,8 +365,13 @@ export function useProjectsState({
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isLoadingProjects, setIsLoadingProjects] = useState(true);
   const [loadingProgress, setLoadingProgress] = useState<LoadingProgress | null>(null);
+  // Set transiently by `handleGoHome` (click on the brand wordmark) so the
+  // single-project auto-select effect below skips exactly one tick — otherwise
+  // it would immediately re-select the only project the user just deselected.
+  const skipNextAutoSelectRef = useRef(false);
   const [isInputFocused, setIsInputFocused] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showNewProject, setShowNewProject] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] = useState('agents');
   const [externalMessageUpdate, setExternalMessageUpdate] = useState(0);
   /**
@@ -567,8 +572,14 @@ export function useProjectsState({
     void hydrateProjectTaskMaster(selectedProject.projectId);
   }, [hydrateProjectTaskMaster, selectedProject?.projectId]);
 
-  // Auto-select the project when there is only one, so the user lands on the new session page
+  // Auto-select the project when there is only one, so the user lands on the new session page.
+  // `skipNextAutoSelectRef` lets `handleGoHome` explicitly deselect (one project + user clicks
+  // the brand) without immediately being undone by this effect.
   useEffect(() => {
+    if (skipNextAutoSelectRef.current) {
+      skipNextAutoSelectRef.current = false;
+      return;
+    }
     if (!isLoadingProjects && projects.length === 1 && !selectedProject && !sessionId) {
       setSelectedProject(projects[0]);
     }
@@ -939,6 +950,17 @@ export function useProjectsState({
     [navigate, selectedProject?.projectId],
   );
 
+  // Fired by clicking the "CloudCLI" brand wordmark in the sidebar header.
+  // Deselects any active project/session and returns the user to the
+  // "Choose a project" empty state. Suppresses the single-project auto-select
+  // for one tick so the deselection actually sticks.
+  const handleGoHome = useCallback(() => {
+    skipNextAutoSelectRef.current = true;
+    setSelectedProject(null);
+    setSelectedSession(null);
+    navigate('/');
+  }, [navigate]);
+
   const sidebarSharedProps = useMemo(
     () => ({
       projects,
@@ -951,11 +973,15 @@ export function useProjectsState({
       onSessionDelete: handleSessionDelete,
       onLoadMoreSessions: loadMoreProjectSessions,
       onProjectDelete: handleProjectDelete,
+      onGoHome: handleGoHome,
       isLoading: isLoadingProjects,
       loadingProgress,
       onRefresh: handleSidebarRefresh,
       onShowSettings: () => setShowSettings(true),
       showSettings,
+      showNewProject,
+      onCreateProject: () => setShowNewProject(true),
+      onCloseNewProject: () => setShowNewProject(false),
       settingsInitialTab,
       onCloseSettings: () => setShowSettings(false),
       isMobile,
@@ -963,6 +989,7 @@ export function useProjectsState({
     [
       handleNewSession,
       handleProjectDelete,
+      handleGoHome,
       handleProjectSelect,
       handleSessionDelete,
       loadMoreProjectSessions,
@@ -976,6 +1003,7 @@ export function useProjectsState({
       settingsInitialTab,
       selectedProject,
       selectedSession,
+      showNewProject,
       showSettings,
     ],
   );
@@ -990,6 +1018,7 @@ export function useProjectsState({
     loadingProgress,
     isInputFocused,
     showSettings,
+    showNewProject,
     settingsInitialTab,
     externalMessageUpdate,
     newSessionTrigger,
@@ -997,6 +1026,7 @@ export function useProjectsState({
     setSidebarOpen,
     setIsInputFocused,
     setShowSettings,
+    setShowNewProject,
     openSettings,
     fetchProjects,
     refreshProjectsSilently,
@@ -1008,6 +1038,7 @@ export function useProjectsState({
     handleSessionDelete,
     loadMoreProjectSessions,
     handleProjectDelete,
+    handleGoHome,
     handleSidebarRefresh,
   };
 }

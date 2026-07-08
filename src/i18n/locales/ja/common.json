@@ -95,7 +95,10 @@
     "createProjectDesktop": "サイドバーのフォルダアイコンをクリックして新しいプロジェクトを作成できます",
     "newSession": "新しいセッション",
     "untitledSession": "無題のセッション",
-    "projectFiles": "プロジェクトファイル"
+    "projectFiles": "プロジェクトファイル",
+    "createProjectCTA": "新しいプロジェクトを作成",
+    "refreshProjects": "プロジェクトを更新",
+    "recentProjects": "最近のプロジェクト"
   },
   "fileTree": {
     "loading": "ファイルを読み込んでいます...",

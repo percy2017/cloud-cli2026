@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/opt/node22/bin/node
 /**
  * Recompile native module bindings for installed plugins.
  *

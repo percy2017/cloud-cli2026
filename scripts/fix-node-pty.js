@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/opt/node22/bin/node
 /**
  * Fix node-pty spawn-helper permissions on macOS
  *

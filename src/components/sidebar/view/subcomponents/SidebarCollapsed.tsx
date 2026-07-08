@@ -1,9 +1,12 @@
-import { Settings, PanelLeftOpen, AlertTriangle } from 'lucide-react';
+import { Settings, PanelLeftOpen, AlertTriangle, LogOut } from 'lucide-react';
 import type { TFunction } from 'i18next';
+
+import { IS_PLATFORM } from '../../../../constants/config';
 
 type SidebarCollapsedProps = {
   onExpand: () => void;
   onShowSettings: () => void;
+  onLogout: () => void;
   restartRequired: boolean;
   t: TFunction;
 };
@@ -11,6 +14,7 @@ type SidebarCollapsedProps = {
 export default function SidebarCollapsed({
   onExpand,
   onShowSettings,
+  onLogout,
   restartRequired,
   t,
 }: SidebarCollapsedProps) {
@@ -37,6 +41,18 @@ export default function SidebarCollapsed({
       >
         <Settings className="h-4 w-4 text-muted-foreground transition-colors group-hover:text-foreground" />
       </button>
+
+      {/* Sign out (self-hosted only — IS_PLATFORM has no local session) */}
+      {!IS_PLATFORM && (
+        <button
+          onClick={onLogout}
+          className="group flex h-8 w-8 items-center justify-center rounded-lg transition-colors hover:bg-accent/80"
+          aria-label={t('auth:logout.button')}
+          title={t('auth:logout.button')}
+        >
+          <LogOut className="h-4 w-4 text-muted-foreground transition-colors group-hover:text-foreground" />
+        </button>
+      )}
 
       {/* Restart-required indicator */}
       {restartRequired && (

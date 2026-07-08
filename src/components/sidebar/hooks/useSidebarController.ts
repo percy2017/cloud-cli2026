@@ -96,6 +96,12 @@ type UseSidebarControllerArgs = {
   setCurrentProject: (project: Project) => void;
   setSidebarVisible: (visible: boolean) => void;
   sidebarVisible: boolean;
+  // "New project" wizard modal state — lifted to `useProjectsState` so other
+  // surfaces (e.g. the main-content empty state) can open it without coupling
+  // to the sidebar.
+  showNewProject: boolean;
+  onCreateProject: () => void;
+  onCloseNewProject: () => void;
 };
 
 export function useSidebarController({
@@ -115,11 +121,13 @@ export function useSidebarController({
   setCurrentProject,
   setSidebarVisible,
   sidebarVisible,
+  showNewProject,
+  onCreateProject,
+  onCloseNewProject,
 }: UseSidebarControllerArgs) {
   const paletteOps = usePaletteOps();
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
   const [editingProject, setEditingProject] = useState<string | null>(null);
-  const [showNewProject, setShowNewProject] = useState(false);
   const [editingName, setEditingName] = useState('');
   const [initialSessionsLoaded, setInitialSessionsLoaded] = useState<Set<string>>(new Set());
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -971,7 +979,8 @@ export function useSidebarController({
     updateSessionSummary,
     collapseSidebar,
     expandSidebar,
-    setShowNewProject,
+    onCreateProject,
+    onCloseNewProject,
     setEditingName,
     setEditingSession,
     setEditingSessionName,

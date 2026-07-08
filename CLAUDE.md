@@ -24,7 +24,160 @@ Requires Node.js 22+ (`.nvmrc` pins `v22`). Use npm — `package.json` declares 
 - `npm run release` — interactive release via `release-it` + `@release-it/conventional-changelog` (requires `GITHUB_TOKEN`).
 - `node scripts/fix-node-pty.js` — postinstall for the **server's own** `node-pty` (macOS spawn-helper perms). Runs automatically via `postinstall`.
 - `node scripts/fix-server-native-modules.js` — recompile the **server's own** native bindings (`better-sqlite3`, `node-pty`, `bcrypt`, `sharp`, …) against the Node ABI used by the runtime. The runtime Node is read from `NODE_BINARY` in `.env` (the same value `ecosystem.config.cjs` consumes for PM2), falling back to `process.execPath`. Runs automatically via `postinstall` and is also exposed as `npm run fix:native`. **Run this after changing `NODE_BINARY` or when the server crashes on startup with `ERR_DLOPEN_FAILED: ... better_sqlite3.node`.** Mirror of `fix-plugin-native-modules.js` for the server itself.
+
+### Dev workflow on this project
+
+The host system default is Node 24 (`/usr/bin/node`). This project pins Node 22 via `.env` (`NODE_BINARY=/opt/node22/bin/node`), `ecosystem.config.cjs#exec_interpreter`, and the `package.json#engines` field (with a `.nvmrc` set to `22`). Before running `npm install` from a shell that defaults to Node 24, either `nvm use`, prefix with `/opt/node22/bin/npm`, or rely on the postinstall (`scripts/fix-server-native-modules.js`) which rebuilds every native binding against `.env` `NODE_BINARY` regardless of which Node invoked npm.
 - `node scripts/fix-plugin-native-modules.js` — recompile native bindings (`node-pty`, `better-sqlite3`, etc.) for installed plugins under `~/.claude-code-ui/plugins/*`. Run after a Node upgrade or when a plugin crashes with "Cannot find module 'node-pty'". Accepts an optional plugin dir name (`… web-terminal`) and `--dry-run`. The install/update flows in `server/utils/plugin-loader.js` already call `npm rebuild` automatically — this script is the manual escape hatch for plugins installed before that fix. Also exposed as `npm run fix:plugin-native`.
+
+## Build & Deploy en el VPS — cómo compilar y actualizar (NUNCA rompas esto)
+
+> **Regla de oro:** este proyecto SIEMPRE corre en **Node 22**, sin importar qué versión de Node tenga el host. PM2, los binarios nativos (`better-sqlite3`, `node-pty`, `bcrypt`, `sharp`) y los scripts de fix deben estar alineados a Node 22. Si se desalinean, el servidor crashea con `ERR_DLOPEN_FAILED: Module did not self-register: '.../better_sqlite3.node'` y entra en bucle de reinicios.
+
+### El problema (por qué pasa cada vez que se actualiza)
+
+1. El VPS trae Node 24 en `/usr/bin/node`, que es el primer `node` en `PATH`.
+2. PM2 sí está bien configurado (`ecosystem.config.cjs` usa `exec_interpreter: process.env.NODE_BINARY` → `/opt/node22/bin/node`), así que el **server corre en Node 22**.
+3. Pero cuando alguien hace `git pull` + `npm install` desde un shell normal, ese `npm` es el de Node 24, y los módulos nativos (`better-sqlite3`, `node-pty`, `bcrypt`, `sharp`) se compilan contra el **ABI de Node 24** (modules version 137).
+4. Al reiniciar, PM2 intenta cargarlos con Node 22 (ABI 127) → **`ERR_DLOPEN_FAILED`** → bucle de crash.
+
+La pieza de defensa está en tres archivos que **deben estar en sync siempre**:
+- `.env#NODE_BINARY=/opt/node22/bin/node`
+- `ecosystem.config.cjs#exec_interpreter` (lee `process.env.NODE_BINARY`)
+- `package.json#engines.node = ">=22.0.0 <23.0.0"` (reforzado por `.npmrc#engine-strict=true`)
+- Shebang de los scripts de fix: `#!/opt/node22/bin/node` (no `#!/usr/bin/env node`)
+
+### El camino correcto — UN solo comando
+
+```bash
+cd /opt/cloud-cli2026
+./scripts/update.sh
+```
+
+Eso es todo. `scripts/update.sh` encapsula los seis pasos críticos en orden:
+
+1. Resuelve `NODE_BINARY` (de la variable de entorno, o de `.env`, o fallback `/opt/node22/bin/node`).
+2. **Antepone `/opt/node22/bin` al `PATH`** para que `npm`, `node-gyp` y cualquier subproceso usen Node 22.
+3. `git pull --rebase --autostash` (skipable con `--no-pull`).
+4. `npm ci` (lockfile-driven, no toca `package.json`; `engine-strict=true` aborta si el Node no es 22).
+5. `npm run fix:native` (recompila nativos explícitamente, por si `postinstall` fue skipeado por `NPM_CONFIG_IGNORE_SCRIPTS`).
+6. `npm run build` → `pm2 restart cloud-cli2026` → health check en `http://127.0.0.1:${SERVER_PORT}/health`. Si el HTTP no es 200, el script imprime el último log de error de PM2 y sale con código 1.
+
+Flags útiles:
+- `./scripts/update.sh --no-pull` — si ya hiciste `git pull` a mano.
+- `./scripts/update.sh --no-build` — si solo cambiaste dependencias/JS sin tocar nada que requiera `dist-server/`.
+- `./scripts/update.sh --no-restart` — para validar la build sin reiniciar PM2.
+- `./scripts/update.sh --hard` — borra `node_modules/` antes de `npm ci` (resuelve dependencias zombi o ABI corrupto persistente).
+
+### El camino manual (qué hace el script por dentro, para aprender)
+
+Si por alguna razón `update.sh` no está disponible, **todos** estos pasos deben ejecutarse con Node 22 en `PATH`. El orden importa:
+
+```bash
+export PATH=/opt/node22/bin:$PATH      # 1. forzar Node 22
+cd /opt/cloud-cli2026
+git pull --rebase --autostash          # 2. traer el código
+npm ci --no-audit --no-fund            # 3. instalar deps con el lockfile
+                                      #    (postinstall recompila nativos
+                                      #     contra Node 22 vía .env NODE_BINARY)
+npm run fix:native                     # 4. belt-and-suspenders
+npm run build                          # 5. tsc + vite → dist/, dist-server/
+pm2 restart cloud-cli2026              # 6. aplicar
+sleep 2 && curl http://127.0.0.1:3030/health   # 7. verificar
+```
+
+### Lo que NUNCA hay que hacer
+
+| ❌ Anti-patrón | Por qué rompe | ✅ Correcto |
+|---|---|---|
+| `npm install` desde shell con `PATH` por defecto | `npm` será Node 24 → nativos contra ABI 137 | `PATH=/opt/node22/bin:$PATH npm ci` o `./scripts/update.sh` |
+| `pm2 restart` sin `npm ci` previo | Si los nativos están desalineados, PM2 no los puede cargar | Siempre `npm ci` antes de reiniciar si cambió `package.json` o `package-lock.json` |
+| Cambiar `.env#NODE_BINARY` sin recompilar nativos | Los `.node` quedan compilados para el Node anterior | Después de tocar `NODE_BINARY`: `npm run fix:native` + `pm2 restart` |
+| Cambiar el shebang de los scripts a `#!/usr/bin/env node` | Coge el `node` de PATH (Node 24) en invocaciones directas | Mantener `#!/opt/node22/bin/node` en `scripts/fix-*.js` |
+| Borrar `.npmrc` o setear `engine-strict=false` | `npm install` con Node 24 ya no aborta, compila en silencio | `.npmrc` debe tener `engine-strict=true` |
+
+### Diagnóstico rápido (cuando algo falla)
+
+```bash
+# 1. ¿Qué Node corrió el último npm?
+head -3 /opt/cloud-cli2026/node_modules/better-sqlite3/build/Release/better_sqlite3.node \
+  | xxd | head -1   # ELF header — útil para confirmar que existe
+
+# 2. ¿El binario carga con Node 22?
+/opt/node22/bin/node -e "require('better-sqlite3')(':memory:')" && echo OK
+
+# 3. ¿Qué Node está en PATH?
+which node && node -v
+# Si dice v24.x.x → estás en el shell equivocado. Usa ./scripts/update.sh
+
+# 4. ¿Qué exec_interpreter tiene PM2?
+pm2 jlist | grep -oE '"exec_interpreter":"[^"]+"' | head -1
+# Debe ser /opt/node22/bin/node
+
+# 5. ¿Qué está roto en el server?
+pm2 logs cloud-cli2026 --lines 50 --nostream --err
+```
+
+Si `require('better-sqlite3')` falla con `ERR_DLOPEN_FAILED`, la solución inmediata es:
+
+```bash
+PATH=/opt/node22/bin:$PATH npm run fix:native
+pm2 restart cloud-cli2026
+```
+
+### Recuperación de emergencia (módulos nativos destruidos)
+
+Si `npm run fix:native` (o cualquier `npm rebuild`) se aborta a mitad de camino — por ejemplo, porque `sharp` falló al compilar (requiere `libvips-dev` que no está instalado) — puede dejar un paquete como `better-sqlite3` con el directorio parcialmente poblado: solo `LICENSE` y `deps/`, sin `package.json` ni `lib/` ni `build/Release/*.node`. Síntomas en logs:
+
+```
+Error: Cannot find package '/opt/cloud-cli2026/node_modules/better-sqlite3/index.js'
+  code: 'ERR_MODULE_NOT_FOUND'
+```
+
+O, si el binario quedó pero compilado para el ABI equivocado:
+
+```
+Error: Module did not self-register: '.../better_sqlite3.node'
+  code: 'ERR_DLOPEN_FAILED'
+```
+
+Receta de recuperación (ojo: parar PM2 primero para que no entre en bucle de crash y nos impida operar):
+
+```bash
+# 1. Parar el bucle de reinicios
+pm2 stop cloud-cli2026 && pm2 delete cloud-cli2026
+
+# 2. Reconstruir TODO node_modules desde el lockfile, SIN postinstall
+#    (con --ignore-scripts evitamos que se dispare el rebuild de sharp)
+export PATH=/opt/node22/bin:$PATH
+npm ci --no-audit --no-fund --ignore-scripts
+
+# 3. Recompilar SOLO los 3 nativos de producción (sharp es devDependency,
+#    no se usa en runtime, y rompe sin libvips-dev)
+npm rebuild --build-from-source bcrypt better-sqlite3 node-pty
+
+# 4. Validar antes de levantar el server
+node -e "require('better-sqlite3')(':memory:'); console.log('OK')"
+node -e "require('bcrypt'); console.log('OK')"
+node -e "require('node-pty'); console.log('OK')"
+
+# 5. Levantar PM2
+pm2 start ecosystem.config.cjs
+sleep 3 && curl http://127.0.0.1:3030/health
+```
+
+**Reglas duras para que el rebuild nunca destruya nada:**
+
+1. **`sharp` nunca se compila desde fuente en este VPS** — no está en el runtime (es devDependency de Vite/image-processing), y requiere `libvips-dev` instalado vía apt. El binario precompilado de npm tampoco funciona en este host (arquitectura), así que la política es: **si el `node_modules/sharp` se rompió, simplemente se borra** con `rm -rf node_modules/sharp` y se deja que Vite lo baje cuando lo necesite (es dev-time).
+2. **`npm ci --ignore-scripts` antes de cualquier `npm rebuild`** — así no se dispara el ciclo destructivo de sharp.
+3. **Si una compilación nativa falla, abortar TODO** — nunca seguir con el siguiente paquete (un rebuild a medias deja el módulo sin `package.json`).
+4. **Validar `require()` después de cada rebuild** — si falla, NO seguir.
+
+El script `scripts/fix-server-native-modules.js` está siendo refactorizado para aplicar estas reglas (ver tarea #7 en el changelog).
+
+### Resumen de una línea
+
+> Cualquier cambio que toque código, dependencias o Node → **`./scripts/update.sh`**. Si necesitas `npm` directo, **`PATH=/opt/node22/bin:$PATH npm ...`**. Nunca `npm install` con el `PATH` por defecto del host.
 
 ### Tests
 

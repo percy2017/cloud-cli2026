@@ -1,0 +1,84 @@
+{
+  "title": "Command palette",
+  "back": "Back to all",
+  "selectProjectFirst": "Select a project first",
+  "search": {
+    "placeholder": "Type to search anything…",
+    "searchPage": "Search {{page}}…",
+    "noResults": "No results.",
+    "backspaceHint": "Backspace to go back"
+  },
+  "pages": {
+    "actions": "Actions",
+    "files": "Files",
+    "sessions": "Sessions",
+    "commits": "Commits",
+    "branches": "Branches"
+  },
+  "groups": {
+    "actions": "Actions",
+    "navigate": "Navigate",
+    "git": "Git",
+    "settings": "Settings",
+    "sessions": "Sessions",
+    "files": "Files",
+    "commits": "Commits",
+    "branches": "Branches"
+  },
+  "actions": {
+    "startNewChat": "Start new chat",
+    "openSettings": "Open settings",
+    "toggleTheme": "Toggle theme"
+  },
+  "navigate": {
+    "chat": "Go to Chat",
+    "files": "Go to Files",
+    "shell": "Go to Shell",
+    "git": "Go to Git",
+    "tasks": "Go to Tasks",
+    "keywords": {
+      "chat": "chat messages conversation",
+      "files": "files file tree explorer",
+      "shell": "shell terminal console",
+      "git": "git diff branches",
+      "tasks": "tasks taskmaster"
+    }
+  },
+  "git": {
+    "fetch": "Git: Fetch",
+    "pull": "Git: Pull",
+    "push": "Git: Push"
+  },
+  "settingsTab": {
+    "prefix": "Settings: ",
+    "agents": "Agents",
+    "appearance": "Appearance",
+    "git": "Git",
+    "apiTokens": "API & Tokens",
+    "tasks": "Tasks",
+    "browser": "Browser",
+    "notifications": "Notifications",
+    "plugins": "Plugins",
+    "about": "About",
+    "keywords": {
+      "agents": "agents subagents claude code",
+      "appearance": "appearance theme dark light language",
+      "git": "git github commits",
+      "apiTokens": "api tokens auth keys",
+      "tasks": "tasks taskmaster",
+      "browser": "browser playwright chromium automation",
+      "notifications": "notifications alerts push",
+      "plugins": "plugins extensions integrations",
+      "about": "about version info"
+    }
+  },
+  "browseAll": {
+    "sessions": "Browse all sessions ({{count}})",
+    "files": "Browse all files ({{count}})",
+    "commits": "Browse all commits ({{count}})",
+    "branches": "Browse all branches ({{count}})"
+  },
+  "branch": {
+    "switchTo": "Switch to: {{name}}"
+  }
+}

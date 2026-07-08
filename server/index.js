@@ -535,6 +535,15 @@ app.get('/api/projects/:projectId/files/content', authenticateToken, async (req,
             return res.status(404).json({ error: 'File not found' });
         }
 
+        // Reject directories explicitly. Without this guard, createReadStream
+        // throws EISDIR ("illegal operation on a directory, read") and the
+        // response is cut mid-stream — the frontend logs an error and the user
+        // sees no content.
+        const resolvedStat = await fsPromises.stat(resolved);
+        if (resolvedStat.isDirectory()) {
+            return res.status(400).json({ error: 'Path is a directory, not a file' });
+        }
+
         // Get file extension and set appropriate content type
         const mimeType = mime.lookup(resolved) || 'application/octet-stream';
         res.setHeader('Content-Type', mimeType);

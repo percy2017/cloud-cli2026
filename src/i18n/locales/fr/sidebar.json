@@ -49,7 +49,8 @@
     "save": "Enregistrer",
     "cancel": "Annuler",
     "clearSearch": "Effacer la recherche",
-    "openCommandPalette": "Ouvrir la palette de commandes"
+    "openCommandPalette": "Ouvrir la palette de commandes",
+    "goHome": "Aller à l'accueil"
   },
   "navigation": {
     "chat": "Chat",

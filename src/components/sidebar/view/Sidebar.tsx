@@ -1,6 +1,10 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import ReactDOM from 'react-dom';
 import { useTranslation } from 'react-i18next';
+import { LogOut } from 'lucide-react';
 
+import { Button } from '../../../shared/view/ui';
+import { useAuth } from '../../auth';
 import { useDeviceSettings } from '../../../hooks/useDeviceSettings';
 import { useVersionCheck } from '../../../hooks/useVersionCheck';
 import { useUiPreferences } from '../../../hooks/useUiPreferences';
@@ -32,16 +36,27 @@ function Sidebar({
   onSessionDelete,
   onLoadMoreSessions,
   onProjectDelete,
+  onGoHome,
   isLoading,
   loadingProgress,
   onRefresh,
   onShowSettings,
   showSettings,
+  showNewProject,
+  onCreateProject,
+  onCloseNewProject,
   settingsInitialTab,
   onCloseSettings,
   isMobile,
 }: SidebarProps) {
-  const { t } = useTranslation(['sidebar', 'common']);
+  const { t } = useTranslation(['sidebar', 'common', 'auth']);
+  const { logout } = useAuth();
+  const [confirmingLogout, setConfirmingLogout] = useState(false);
+  const handleRequestLogout = () => setConfirmingLogout(true);
+  const handleConfirmLogout = () => {
+    setConfirmingLogout(false);
+    logout();
+  };
   const { isPWA } = useDeviceSettings({ trackMobile: false });
   const { restartRequired, latestVersion, currentVersion, releaseInfo, installMode } = useVersionCheck(
     'siteboon',
@@ -57,7 +72,6 @@ function Sidebar({
     isSidebarCollapsed,
     expandedProjects,
     editingProject,
-    showNewProject,
     editingName,
     initialSessionsLoaded,
     currentTime,
@@ -103,7 +117,6 @@ function Sidebar({
     updateSessionSummary,
     collapseSidebar: handleCollapseSidebar,
     expandSidebar: handleExpandSidebar,
-    setShowNewProject,
     setEditingName,
     setEditingSession,
     setEditingSessionName,
@@ -128,6 +141,9 @@ function Sidebar({
     setCurrentProject,
     setSidebarVisible: (visible) => setPreference('sidebarVisible', visible),
     sidebarVisible,
+    showNewProject,
+    onCreateProject,
+    onCloseNewProject,
   });
 
   useEffect(() => {
@@ -202,7 +218,7 @@ function Sidebar({
         settingsInitialTab={settingsInitialTab}
         onCloseSettings={onCloseSettings}
         showNewProject={showNewProject}
-        onCloseNewProject={() => setShowNewProject(false)}
+        onCloseNewProject={onCloseNewProject}
         onProjectCreated={handleProjectCreated}
         deleteConfirmation={deleteConfirmation}
         onCancelDeleteProject={() => setDeleteConfirmation(null)}
@@ -223,6 +239,7 @@ function Sidebar({
         <SidebarCollapsed
           onExpand={handleExpandSidebar}
           onShowSettings={onShowSettings}
+          onLogout={handleRequestLogout}
           restartRequired={restartRequired}
           t={t}
         />
@@ -292,16 +309,59 @@ function Sidebar({
               void refreshProjects();
             }}
             isRefreshing={isRefreshing}
-            onCreateProject={() => setShowNewProject(true)}
+            onCreateProject={onCreateProject}
             onCollapseSidebar={handleCollapseSidebar}
             restartRequired={restartRequired}
             onShowSettings={onShowSettings}
+            onGoHome={onGoHome ?? (() => undefined)}
+            onLogout={handleRequestLogout}
             projectListProps={projectListProps}
             t={t}
           />
         </>
       )}
 
+      {/* Logout confirmation modal — matches the destructive-confirm pattern from SidebarModals. */}
+      {confirmingLogout &&
+        ReactDOM.createPortal(
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+            <div className="w-full max-w-md overflow-hidden rounded-xl border border-border bg-card shadow-2xl">
+              <div className="p-6">
+                <div className="flex items-start gap-4">
+                  <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-orange-100 dark:bg-orange-900/30">
+                    <LogOut className="h-6 w-6 text-orange-600 dark:text-orange-400" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <h3 className="mb-2 text-lg font-semibold text-foreground">
+                      {t('auth:logout.title')}
+                    </h3>
+                    <p className="text-sm text-muted-foreground">
+                      {t('auth:logout.confirm')}
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <div className="flex flex-col gap-2 border-t border-border bg-muted/30 p-4">
+                <Button
+                  variant="destructive"
+                  className="w-full justify-start bg-red-600 text-white hover:bg-red-700"
+                  onClick={handleConfirmLogout}
+                >
+                  <LogOut className="mr-2 h-4 w-4" />
+                  {t('auth:logout.button')}
+                </Button>
+                <Button
+                  variant="ghost"
+                  className="w-full"
+                  onClick={() => setConfirmingLogout(false)}
+                >
+                  {t('common:buttons.cancel', t('actions.cancel'))}
+                </Button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
     </>
   );
 }

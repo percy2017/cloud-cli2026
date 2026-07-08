@@ -95,7 +95,10 @@
     "createProjectDesktop": "Создайте новый проект, нажав на значок папки на боковой панели",
     "newSession": "Новый сеанс",
     "untitledSession": "Безымянный сеанс",
-    "projectFiles": "Файлы проекта"
+    "projectFiles": "Файлы проекта",
+    "createProjectCTA": "Создать новый проект",
+    "refreshProjects": "Обновить проекты",
+    "recentProjects": "Недавние проекты"
   },
   "fileTree": {
     "loading": "Загрузка файлов...",

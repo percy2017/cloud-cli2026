@@ -1,5 +1,8 @@
 import { useCallback, useRef, useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
+
 import type { MainContentHeaderProps } from '../../types/types';
+import { BrandWordmark } from '../../../../shared/view/ui';
 import MobileMenuButton from './MobileMenuButton';
 import MainContentTabSwitcher from './MainContentTabSwitcher';
 import MainContentTitle from './MainContentTitle';
@@ -13,7 +16,9 @@ export default function MainContentHeader({
   shouldShowBrowserTab,
   isMobile,
   onMenuClick,
+  onGoHome,
 }: MainContentHeaderProps) {
+  const { t } = useTranslation('sidebar');
   const scrollRef = useRef<HTMLDivElement>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
@@ -39,6 +44,17 @@ export default function MainContentHeader({
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 flex-1 items-center gap-2">
           {isMobile && <MobileMenuButton onMenuClick={onMenuClick} />}
+          {isMobile && (
+            <button
+              type="button"
+              onClick={onGoHome}
+              className="flex-shrink-0 rounded-md transition-opacity hover:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              aria-label={t('tooltips.goHome')}
+              title={t('tooltips.goHome')}
+            >
+              <BrandWordmark />
+            </button>
+          )}
           <MainContentTitle
             activeTab={activeTab}
             selectedProject={selectedProject}

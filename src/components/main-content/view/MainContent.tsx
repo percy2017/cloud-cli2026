@@ -52,6 +52,11 @@ function MainContent({
   onShowSettings,
   externalMessageUpdate,
   newSessionTrigger,
+  onGoHome,
+  onRefresh,
+  onCreateProject,
+  projects,
+  onProjectSelect,
 }: MainContentProps) {
   const { preferences } = useUiPreferences();
   const { showRawParameters, showThinking, sendByCtrlEnter } = preferences;
@@ -133,11 +138,29 @@ function MainContent({
   });
 
   if (isLoading) {
-    return <MainContentStateView mode="loading" isMobile={isMobile} onMenuClick={onMenuClick} />;
+    return (
+      <MainContentStateView
+        mode="loading"
+        isMobile={isMobile}
+        onMenuClick={onMenuClick}
+        onGoHome={onGoHome ?? (() => undefined)}
+      />
+    );
   }
 
   if (!selectedProject) {
-    return <MainContentStateView mode="empty" isMobile={isMobile} onMenuClick={onMenuClick} />;
+    return (
+      <MainContentStateView
+        mode="empty"
+        isMobile={isMobile}
+        onMenuClick={onMenuClick}
+        onGoHome={onGoHome ?? (() => undefined)}
+        onCreateProject={onCreateProject}
+        onRefresh={onRefresh}
+        projects={projects}
+        onProjectSelect={onProjectSelect}
+      />
+    );
   }
 
   return (
@@ -151,6 +174,7 @@ function MainContent({
         shouldShowBrowserTab={shouldShowBrowserTab}
         isMobile={isMobile}
         onMenuClick={onMenuClick}
+        onGoHome={onGoHome ?? (() => undefined)}
       />
 
       <div className="flex min-h-0 flex-1 overflow-hidden">

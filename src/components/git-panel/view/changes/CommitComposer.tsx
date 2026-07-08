@@ -123,7 +123,7 @@ export default function CommitComposer({
             <textarea
               value={commitMessage}
               onChange={(event) => setCommitMessage(event.target.value)}
-              placeholder="Message (Ctrl+Enter to commit)"
+              placeholder="tipo: asunto corto (Ctrl+Enter para commit)  ej. chore: update mobile UI"
               className="w-full resize-none rounded-xl border border-border bg-background px-3 py-2 pr-20 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary/30 focus:outline-none focus:ring-2 focus:ring-primary/20"
               rows={3}
               onKeyDown={(event) => {
@@ -162,6 +162,11 @@ export default function CommitComposer({
               <span>{isCommitting ? 'Committing...' : 'Commit'}</span>
             </button>
           </div>
+          <p className="mt-1.5 text-[11px] leading-tight text-muted-foreground">
+            Format: <code className="rounded bg-muted px-1 py-0.5 font-mono text-[10px]">type(scope): subject</code>.
+            Valid types: <code className="font-mono text-[10px]">feat, fix, docs, style, refactor, perf, test, build, ci, chore</code>.
+            Or use the ✨ button to auto-generate one.
+          </p>
         </div>
       )}
     </div>

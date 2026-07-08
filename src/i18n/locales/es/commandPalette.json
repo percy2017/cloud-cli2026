@@ -1,0 +1,84 @@
+{
+  "title": "Paleta de comandos",
+  "back": "Volver al inicio",
+  "selectProjectFirst": "Selecciona un proyecto primero",
+  "search": {
+    "placeholder": "Escribe para buscar cualquier cosa…",
+    "searchPage": "Buscar {{page}}…",
+    "noResults": "Sin resultados.",
+    "backspaceHint": "Retroceso para volver"
+  },
+  "pages": {
+    "actions": "Acciones",
+    "files": "Archivos",
+    "sessions": "Sesiones",
+    "commits": "Commits",
+    "branches": "Ramas"
+  },
+  "groups": {
+    "actions": "Acciones",
+    "navigate": "Navegar",
+    "git": "Git",
+    "settings": "Ajustes",
+    "sessions": "Sesiones",
+    "files": "Archivos",
+    "commits": "Commits",
+    "branches": "Ramas"
+  },
+  "actions": {
+    "startNewChat": "Iniciar nuevo chat",
+    "openSettings": "Abrir ajustes",
+    "toggleTheme": "Cambiar tema"
+  },
+  "navigate": {
+    "chat": "Ir a Chat",
+    "files": "Ir a Archivos",
+    "shell": "Ir a Shell",
+    "git": "Ir a Git",
+    "tasks": "Ir a Tareas",
+    "keywords": {
+      "chat": "chat mensajes conversación",
+      "files": "archivos explorador ficheros",
+      "shell": "shell terminal consola",
+      "git": "git diff ramas",
+      "tasks": "tareas taskmaster"
+    }
+  },
+  "git": {
+    "fetch": "Git: Traer",
+    "pull": "Git: Jalar",
+    "push": "Git: Empujar"
+  },
+  "settingsTab": {
+    "prefix": "Ajustes: ",
+    "agents": "Agentes",
+    "appearance": "Apariencia",
+    "git": "Git",
+    "apiTokens": "API y tokens",
+    "tasks": "Tareas",
+    "browser": "Navegador",
+    "notifications": "Notificaciones",
+    "plugins": "Complementos",
+    "about": "Acerca de",
+    "keywords": {
+      "agents": "agents subagents claude code",
+      "appearance": "appearance theme dark light language",
+      "git": "git github commits",
+      "apiTokens": "api tokens auth keys",
+      "tasks": "tasks taskmaster",
+      "browser": "browser playwright chromium automation",
+      "notifications": "notifications alerts push",
+      "plugins": "plugins extensions integrations",
+      "about": "about version info"
+    }
+  },
+  "browseAll": {
+    "sessions": "Ver todas las sesiones ({{count}})",
+    "files": "Ver todos los archivos ({{count}})",
+    "commits": "Ver todos los commits ({{count}})",
+    "branches": "Ver todas las ramas ({{count}})"
+  },
+  "branch": {
+    "switchTo": "Cambiar a: {{name}}"
+  }
+}

@@ -596,9 +596,22 @@ export function useGitPanelController({
           return true;
         }
 
-        console.error('Commit failed:', data.error);
+        // Surface the failure in the panel header (operationError) so the user
+        // sees why the commit was rejected — the backend already returns a
+        // translated, actionable message (e.g. for commitlint: "must follow
+        // Conventional Commits: `type(scope): subject`"). Without this the
+        // user only sees a 400 in the console and has no idea what to fix.
+        const failureMessage = data.error || 'Commit failed';
+        setOperationError(failureMessage);
+        if (data.details) {
+          console.error('Commit failed:', failureMessage, '\n', data.details);
+        } else {
+          console.error('Commit failed:', failureMessage);
+        }
         return false;
       } catch (error) {
+        const message = error instanceof Error ? error.message : 'Error committing changes';
+        setOperationError(message);
         console.error('Error committing changes:', error);
         return false;
       }
@@ -738,14 +751,19 @@ export function useGitPanelController({
     return () => {
       controller.abort();
     };
-  }, [fetchBranches, fetchGitStatus, fetchRemoteStatus, selectedProject]);
+    // Depend on projectId/fullPath, not the full selectedProject reference.
+    // `selectedProject` is rebuilt on every session_upserted (constant while a
+    // Claude run is active), which would otherwise re-fire this effect and
+    // re-hit /api/git/status once per tool call.
+  }, [fetchBranches, fetchGitStatus, fetchRemoteStatus, selectedProject?.projectId, selectedProject?.fullPath]);
 
   useEffect(() => {
     if (!selectedProject || activeView !== 'history') {
       return;
     }
     void fetchRecentCommits();
-  }, [activeView, fetchRecentCommits, selectedProject]);
+    // See note above — depend on projectId/fullPath, not selectedProject.
+  }, [activeView, fetchRecentCommits, selectedProject?.projectId, selectedProject?.fullPath]);
 
   return {
     gitStatus,

@@ -95,7 +95,10 @@
     "createProjectDesktop": "Erstell ein neues Projekt, indem du auf das Ordnersymbol in der Seitenleiste klickst",
     "newSession": "Neue Sitzung",
     "untitledSession": "Unbenannte Sitzung",
-    "projectFiles": "Projektdateien"
+    "projectFiles": "Projektdateien",
+    "createProjectCTA": "Neues Projekt erstellen",
+    "refreshProjects": "Projekte aktualisieren",
+    "recentProjects": "Letzte Projekte"
   },
   "fileTree": {
     "loading": "Dateien werden geladen...",

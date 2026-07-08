@@ -1,4 +1,5 @@
 export { Alert, AlertTitle, AlertDescription, alertVariants } from './Alert';
+export { default as BrandWordmark } from './BrandWordmark';
 export { Badge, badgeVariants } from './Badge';
 export { Button, buttonVariants } from './Button';
 export { Confirmation, ConfirmationTitle, ConfirmationRequest, ConfirmationAccepted, ConfirmationRejected, ConfirmationActions, ConfirmationAction } from './Confirmation';

@@ -44,10 +44,28 @@ const pathExistsAsDirectory = async (directoryPath: string): Promise<boolean> =>
 const listChildDirectories = async (directoryPath: string): Promise<string[]> => {
   try {
     const entries = await readdir(directoryPath, { withFileTypes: true });
-    return entries
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => path.join(directoryPath, entry.name))
-      .sort((left, right) => left.localeCompare(right));
+    const resolved: string[] = [];
+    for (const entry of entries) {
+      // Follow symlinks pointing at directories — `Dirent#isDirectory()` only
+      // reports the entry's own type, so a `claude-code-ui/plugins/<x>` symlink
+      // to a real plugin folder would otherwise be silently skipped.
+      if (entry.isDirectory()) {
+        resolved.push(path.join(directoryPath, entry.name));
+        continue;
+      }
+      if (!entry.isSymbolicLink()) {
+        continue;
+      }
+      try {
+        const targetStats = await stat(path.join(directoryPath, entry.name));
+        if (targetStats.isDirectory()) {
+          resolved.push(path.join(directoryPath, entry.name));
+        }
+      } catch {
+        // Broken or unreadable symlink — skip without blocking siblings.
+      }
+    }
+    return resolved.sort((left, right) => left.localeCompare(right));
   } catch {
     return [];
   }

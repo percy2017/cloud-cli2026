@@ -171,7 +171,18 @@ async function handleChatSend(
     await spawnFn(command, runtimeOptions, run.writer);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error(`[Chat] Provider runtime "${provider}" failed`, { sessionId, error: message });
+    // The OpenCode CLI child process gets killed whenever PM2 restarts the
+    // Node parent (e.g. after a deploy or a config reload), which surfaces as
+    // "OpenCode CLI process was terminated". That's expected during a
+    // graceful restart, not a real failure — demote to warn so it doesn't
+    // pollute the error log. Any other provider error stays at error level.
+    const isOpenCodeTerminated = provider === 'opencode'
+      && /process was terminated/i.test(message);
+    if (isOpenCodeTerminated) {
+      console.warn(`[Chat] Provider runtime "${provider}" terminated (likely server restart)`, { sessionId });
+    } else {
+      console.error(`[Chat] Provider runtime "${provider}" failed`, { sessionId, error: message });
+    }
   } finally {
     // Safety net: a runtime that crashed (or resolved) without emitting its
     // terminal `complete` would otherwise leave the session stuck in

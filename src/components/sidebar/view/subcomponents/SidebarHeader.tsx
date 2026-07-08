@@ -1,8 +1,7 @@
 import { Activity, Archive, Folder, FolderPlus, MessageSquare, Plus, RefreshCw, Search, X, PanelLeftClose } from 'lucide-react';
 import type { TFunction } from 'i18next';
 
-import { Button, Input, Tooltip } from '../../../../shared/view/ui';
-import { CLOUDCLI_WORDMARK_FONT_FAMILY } from '../../../../constants/branding';
+import { BrandWordmark, Button, Input, Tooltip } from '../../../../shared/view/ui';
 import { IS_PLATFORM } from '../../../../constants/config';
 import { cn } from '../../../../lib/utils';
 import type { SidebarSearchMode } from '../../types/types';
@@ -27,6 +26,7 @@ type SidebarHeaderProps = {
   isRefreshing: boolean;
   onCreateProject: () => void;
   onCollapseSidebar: () => void;
+  onGoHome: () => void;
   t: TFunction;
 };
 
@@ -47,6 +47,7 @@ export default function SidebarHeader({
   isRefreshing,
   onCreateProject,
   onCollapseSidebar,
+  onGoHome,
   t,
 }: SidebarHeaderProps) {
   const showSearchTools = (projectsCount > 0 || runningSessionsCount > 0 || archivedSessionsCount > 0 || isArchivedSessionsLoading) && !isLoading;
@@ -58,22 +59,6 @@ export default function SidebarHeader({
         ? t('search.runningPlaceholder', 'Search running sessions...')
         : t('projects.searchPlaceholder');
   const runningBadgeText = runningSessionsCount > 99 ? '99+' : String(runningSessionsCount);
-
-  const LogoBlock = () => (
-    <div className="flex min-w-0 items-center gap-2.5">
-      <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-primary/90 shadow-sm">
-        <svg className="h-3.5 w-3.5 text-primary-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
-          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-        </svg>
-      </div>
-      <h1
-        className="truncate text-sm font-bold tracking-tight text-foreground"
-        style={{ fontFamily: CLOUDCLI_WORDMARK_FONT_FAMILY }}
-      >
-        {t('app.title')}
-      </h1>
-    </div>
-  );
 
   return (
     <div className="flex-shrink-0">
@@ -89,10 +74,18 @@ export default function SidebarHeader({
               className="flex min-w-0 items-center gap-2.5 transition-opacity hover:opacity-80"
               title={t('tooltips.viewEnvironments')}
             >
-              <LogoBlock />
+              <BrandWordmark />
             </a>
           ) : (
-            <LogoBlock />
+            <button
+              type="button"
+              onClick={onGoHome}
+              className="flex min-w-0 items-center gap-2.5 rounded-md transition-opacity hover:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              aria-label={t('tooltips.goHome')}
+              title={t('tooltips.goHome')}
+            >
+              <BrandWordmark />
+            </button>
           )}
 
           <div className="flex flex-shrink-0 items-center gap-0.5">
@@ -249,10 +242,18 @@ export default function SidebarHeader({
               className="flex min-w-0 items-center gap-2.5 transition-opacity active:opacity-70"
               title={t('tooltips.viewEnvironments')}
             >
-              <LogoBlock />
+              <BrandWordmark />
             </a>
           ) : (
-            <LogoBlock />
+            <button
+              type="button"
+              onClick={onGoHome}
+              className="flex min-w-0 items-center gap-2.5 rounded-md transition-opacity active:opacity-70 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              aria-label={t('tooltips.goHome')}
+              title={t('tooltips.goHome')}
+            >
+              <BrandWordmark />
+            </button>
           )}
 
           <div className="flex flex-shrink-0 gap-1.5">

@@ -898,6 +898,31 @@ export function addUniqueProviderSkillSource(
 // ---------------------------
 //----------------- PROVIDER SKILL MARKDOWN UTILITIES ------------
 /**
+ * Returns true when the entry is a real directory OR a symbolic link whose
+ * target is a directory. `Dirent#isDirectory()` returns `false` for symlinks
+ * regardless of the target type, so users who organize their provider config
+ * with symlinks (e.g. `~/.claude/skills/<name>` → `~/.agents/skills/<name>`)
+ * would otherwise see those skills silently filtered out.
+ */
+const isDirectoryLike = async (
+  entry: { name: string; isDirectory(): boolean; isSymbolicLink(): boolean },
+  parentPath: string,
+): Promise<boolean> => {
+  if (entry.isDirectory()) {
+    return true;
+  }
+  if (!entry.isSymbolicLink()) {
+    return false;
+  }
+  try {
+    const targetStats = await stat(path.join(parentPath, entry.name));
+    return targetStats.isDirectory();
+  } catch {
+    return false;
+  }
+};
+
+/**
  * Finds direct child skill markdown files under a provider skill root.
  *
  * Skill systems usually store one skill per child directory, so direct mode
@@ -905,12 +930,18 @@ export function addUniqueProviderSkillSource(
  * provider sources that can nest skills arbitrarily, and it returns every
  * descendant `SKILL.md`. Missing or unreadable roots return an empty list
  * because users may not have every provider installed or configured.
+ *
+ * Symlinks whose target is a directory are followed so users can point a
+ * provider skill root at a shared or alternate location without each provider
+ * reimplementing its own symlink handling. Recursive walks dedupe by the
+ * resolved real path to avoid cycles.
  */
 export async function findProviderSkillMarkdownFiles(
   rootDir: string,
   options: { recursive?: boolean } = {},
 ): Promise<string[]> {
   const skillFiles: string[] = [];
+  const visitedRealPaths = new Set<string>();
 
   const collectRecursive = async (dirPath: string): Promise<void> => {
     let entries;
@@ -931,9 +962,20 @@ export async function findProviderSkillMarkdownFiles(
     }
 
     for (const entry of entries) {
-      if (entry.isDirectory()) {
-        await collectRecursive(path.join(dirPath, entry.name));
+      if (!(await isDirectoryLike(entry, dirPath))) {
+        continue;
       }
+      const childPath = path.join(dirPath, entry.name);
+      try {
+        const realPath = await realpath(childPath);
+        if (visitedRealPaths.has(realPath)) {
+          continue;
+        }
+        visitedRealPaths.add(realPath);
+      } catch {
+        // Unresolvable targets are still walked once via the symlink path.
+      }
+      await collectRecursive(childPath);
     }
   };
 
@@ -946,7 +988,7 @@ export async function findProviderSkillMarkdownFiles(
     const entries = await readdir(rootDir, { withFileTypes: true });
 
     for (const entry of entries) {
-      if (!entry.isDirectory()) {
+      if (!(await isDirectoryLike(entry, rootDir))) {
         continue;
       }
 

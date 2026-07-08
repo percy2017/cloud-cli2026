@@ -1,4 +1,9 @@
-#!/usr/bin/env node
+#!/opt/node22/bin/node
+// Pinned to /opt/node22/bin/node so direct invocations (e.g. ./scripts/...sh
+// wrappers or cron) don't pick up the system Node 24 from PATH and rebuild
+// natives against the wrong ABI. If you move Node elsewhere, update this
+// shebang AND `.env#NODE_BINARY` AND `ecosystem.config.cjs#exec_interpreter`
+// in lockstep. See scripts/update.sh for the canonical flow.
 /**
  * Recompile the server's native module bindings against the Node ABI used by
  * the runtime (PM2 / production `node`).

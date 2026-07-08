@@ -50,11 +50,19 @@ export type SidebarProps = {
   // `projectId` is the DB identifier; the sidebar hands it back to the parent
   // when the delete flow completes.
   onProjectDelete?: (projectId: string) => void;
+  // Fired by clicking the brand wordmark in the sidebar header.
+  // Deselects the active project/session and returns to the empty state.
+  onGoHome?: () => void;
   isLoading: boolean;
   loadingProgress: LoadingProgress | null;
   onRefresh: () => Promise<void> | void;
   onShowSettings: () => void;
   showSettings: boolean;
+  // Project creation wizard state — lifted to useProjectsState so other
+  // surfaces (main-content empty state) can open the wizard too.
+  showNewProject: boolean;
+  onCreateProject: () => void;
+  onCloseNewProject: () => void;
   settingsInitialTab: string;
   onCloseSettings: () => void;
   isMobile: boolean;

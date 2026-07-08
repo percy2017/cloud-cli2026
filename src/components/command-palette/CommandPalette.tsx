@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
@@ -40,13 +41,7 @@ import { useGitActions } from './sources/useGitActions';
 
 type Page = 'actions' | 'files' | 'sessions' | 'commits' | 'branches';
 
-const PAGE_LABELS: Record<Page, string> = {
-  actions: 'Actions',
-  files: 'Files',
-  sessions: 'Sessions',
-  commits: 'Commits',
-  branches: 'Branches',
-};
+const NAV_TAB_IDS: AppTab[] = ['chat', 'files', 'shell', 'git', 'tasks'];
 
 type CommandPaletteProps = {
   selectedProject: Project | null;
@@ -55,20 +50,13 @@ type CommandPaletteProps = {
   onShowTab?: (tab: AppTab) => void;
 };
 
-const NAV_TABS: Array<{ id: AppTab; label: string; keywords: string }> = [
-  { id: 'chat', label: 'Go to Chat', keywords: 'chat messages conversation' },
-  { id: 'files', label: 'Go to Files', keywords: 'files file tree explorer' },
-  { id: 'shell', label: 'Go to Shell', keywords: 'shell terminal console' },
-  { id: 'git', label: 'Go to Git', keywords: 'git diff branches' },
-  { id: 'tasks', label: 'Go to Tasks', keywords: 'tasks taskmaster' },
-];
-
 export default function CommandPalette({
   selectedProject,
   onStartNewChat,
   onOpenSettings,
   onShowTab,
 }: CommandPaletteProps) {
+  const { t } = useTranslation('commandPalette');
   const [open, setOpen] = React.useState(false);
   const [search, setSearch] = React.useState('');
   const [pages, setPages] = React.useState<Page[]>([]);
@@ -163,39 +151,45 @@ export default function CommandPalette({
   const sessionsShown = page === 'sessions' ? sessionRows : sessionRows.slice(0, browseLimit);
   const branchesShown = page === 'branches' ? branches : branches.slice(0, browseLimit);
 
+  const pageLabel = (p: Page): string => t(`pages.${p}`);
+  const navLabel = (id: AppTab): string => t(`navigate.${id}`);
+  const navKeywords = (id: AppTab): string => t(`navigate.keywords.${id}`);
+
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent className="max-w-xl overflow-hidden p-0">
-        <DialogTitle>Command palette</DialogTitle>
-        <Command label="Command palette" onKeyDown={handleKeyDown}>
+        <DialogTitle>{t('title')}</DialogTitle>
+        <Command label={t('title')} onKeyDown={handleKeyDown}>
           {page && (
             <div className="flex items-center gap-2 border-b px-3 py-2">
               <span className="inline-flex items-center gap-1 rounded-md bg-accent px-2 py-0.5 text-xs font-medium text-accent-foreground">
-                {PAGE_LABELS[page]}
+                {pageLabel(page)}
                 <button
                   type="button"
                   onClick={popPage}
-                  aria-label="Back to all"
+                  aria-label={t('back')}
                   className="ml-0.5 rounded-sm opacity-70 hover:opacity-100"
                 >
                   <X className="h-3 w-3" />
                 </button>
               </span>
-              <span className="text-xs text-muted-foreground">Backspace to go back</span>
+              <span className="text-xs text-muted-foreground">{t('search.backspaceHint')}</span>
             </div>
           )}
           <CommandInput
-            placeholder={page ? `Search ${PAGE_LABELS[page].toLowerCase()}…` : 'Type to search anything…'}
+            placeholder={page
+              ? t('search.searchPage', { page: pageLabel(page).toLowerCase() })
+              : t('search.placeholder')}
             value={search}
             onValueChange={setSearch}
           />
           <CommandList>
-            <CommandEmpty>No results.</CommandEmpty>
+            <CommandEmpty>{t('search.noResults')}</CommandEmpty>
 
             {showActions && (
-              <CommandGroup heading="Actions">
+              <CommandGroup heading={t('groups.actions')}>
                 <CommandItem
-                  value="Start new chat"
+                  value={t('actions.startNewChat')}
                   disabled={startNewChatDisabled}
                   onSelect={() => {
                     if (!selectedProject) return;
@@ -203,79 +197,92 @@ export default function CommandPalette({
                   }}
                 >
                   <MessageSquarePlus className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-                  <span className="flex-1">Start new chat</span>
+                  <span className="flex-1">{t('actions.startNewChat')}</span>
                   {startNewChatDisabled && (
-                    <span className="text-xs text-muted-foreground">Select a project first</span>
+                    <span className="text-xs text-muted-foreground">{t('selectProjectFirst')}</span>
                   )}
                 </CommandItem>
-                <CommandItem value="Open settings" onSelect={() => run(() => onOpenSettings())}>
+                <CommandItem
+                  value={t('actions.openSettings')}
+                  onSelect={() => run(() => onOpenSettings())}
+                >
                   <Settings className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-                  <span className="flex-1">Open settings</span>
+                  <span className="flex-1">{t('actions.openSettings')}</span>
                 </CommandItem>
-                <CommandItem value="Toggle theme dark light mode" onSelect={() => run(toggleDarkMode)}>
+                <CommandItem
+                  value={`${t('actions.toggleTheme')} ${t('actions.toggleTheme')}`}
+                  onSelect={() => run(toggleDarkMode)}
+                >
                   <SunMoon className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-                  <span className="flex-1">Toggle theme</span>
+                  <span className="flex-1">{t('actions.toggleTheme')}</span>
                 </CommandItem>
               </CommandGroup>
             )}
 
             {showActions && (
-              <CommandGroup heading="Navigate">
-                {NAV_TABS.map((tab) => (
+              <CommandGroup heading={t('groups.navigate')}>
+                {NAV_TAB_IDS.map((id) => (
                   <CommandItem
-                    key={tab.id as string}
-                    value={`${tab.label} ${tab.keywords}`}
-                    onSelect={() => run(() => onShowTab?.(tab.id))}
+                    key={id as string}
+                    value={`${navLabel(id)} ${navKeywords(id)}`}
+                    onSelect={() => run(() => onShowTab?.(id))}
                   >
-                    <span className="flex-1">{tab.label}</span>
+                    <span className="flex-1">{navLabel(id)}</span>
                   </CommandItem>
                 ))}
               </CommandGroup>
             )}
 
             {showActions && projectId && (
-              <CommandGroup heading="Git">
+              <CommandGroup heading={t('groups.git')}>
                 <CommandItem
-                  value="Git Fetch remote"
+                  value={t('git.fetch')}
                   onSelect={() => run(() => { void git.fetch(); onShowTab?.('git'); })}
                 >
                   <RefreshCw className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-                  <span className="flex-1">Git: Fetch</span>
+                  <span className="flex-1">{t('git.fetch')}</span>
                 </CommandItem>
                 <CommandItem
-                  value="Git Pull merge upstream"
+                  value={t('git.pull')}
                   onSelect={() => run(() => { void git.pull(); onShowTab?.('git'); })}
                 >
                   <ArrowDownToLine className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-                  <span className="flex-1">Git: Pull</span>
+                  <span className="flex-1">{t('git.pull')}</span>
                 </CommandItem>
                 <CommandItem
-                  value="Git Push origin remote"
+                  value={t('git.push')}
                   onSelect={() => run(() => { void git.push(); onShowTab?.('git'); })}
                 >
                   <ArrowUpFromLine className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-                  <span className="flex-1">Git: Push</span>
+                  <span className="flex-1">{t('git.push')}</span>
                 </CommandItem>
               </CommandGroup>
             )}
 
             {showActions && (
-              <CommandGroup heading="Settings">
-                {SETTINGS_MAIN_TABS.map(({ id, label, keywords, icon: Icon }) => (
-                  <CommandItem
-                    key={id}
-                    value={`Settings ${label} ${keywords}`}
-                    onSelect={() => run(() => onOpenSettings(id))}
-                  >
-                    <Icon className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-                    <span className="flex-1">Settings: {label}</span>
-                  </CommandItem>
-                ))}
+              <CommandGroup heading={t('groups.settings')}>
+                {SETTINGS_MAIN_TABS.map(({ id, icon: Icon }) => {
+                  const label = t(`settingsTab.${id}`);
+                  const keywords = t(`settingsTab.keywords.${id}`);
+                  return (
+                    <CommandItem
+                      key={id}
+                      value={`${t('groups.settings')} ${label} ${keywords}`}
+                      onSelect={() => run(() => onOpenSettings(id))}
+                    >
+                      <Icon className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                      <span className="flex-1">
+                        {t('settingsTab.prefix')}
+                        {label}
+                      </span>
+                    </CommandItem>
+                  );
+                })}
               </CommandGroup>
             )}
 
             {showSessions && projectId && sessionsShown.length > 0 && (
-              <CommandGroup heading="Sessions">
+              <CommandGroup heading={t('groups.sessions')}>
                 {sessionsShown.map((s) => (
                   <CommandItem
                     key={s.id}
@@ -295,13 +302,16 @@ export default function CommandPalette({
                   </CommandItem>
                 ))}
                 {!page && sessionRows.length > browseLimit && (
-                  <BrowseAllItem label={`Browse all sessions (${sessionRows.length})`} onSelect={() => pushPage('sessions')} />
+                  <BrowseAllItem
+                    label={t('browseAll.sessions', { count: sessionRows.length })}
+                    onSelect={() => pushPage('sessions')}
+                  />
                 )}
               </CommandGroup>
             )}
 
             {showFiles && projectId && filesShown.length > 0 && (
-              <CommandGroup heading="Files">
+              <CommandGroup heading={t('groups.files')}>
                 {filesShown.map((f) => (
                   <CommandItem
                     key={f.path}
@@ -314,13 +324,16 @@ export default function CommandPalette({
                   </CommandItem>
                 ))}
                 {!page && files.length > browseLimit && (
-                  <BrowseAllItem label={`Browse all files (${files.length})`} onSelect={() => pushPage('files')} />
+                  <BrowseAllItem
+                    label={t('browseAll.files', { count: files.length })}
+                    onSelect={() => pushPage('files')}
+                  />
                 )}
               </CommandGroup>
             )}
 
             {showCommits && projectId && commitsShown.length > 0 && (
-              <CommandGroup heading="Commits">
+              <CommandGroup heading={t('groups.commits')}>
                 {commitsShown.map((c) => (
                   <CommandItem
                     key={c.hash}
@@ -334,13 +347,16 @@ export default function CommandPalette({
                   </CommandItem>
                 ))}
                 {!page && commits.length > browseLimit && (
-                  <BrowseAllItem label={`Browse all commits (${commits.length})`} onSelect={() => pushPage('commits')} />
+                  <BrowseAllItem
+                    label={t('browseAll.commits', { count: commits.length })}
+                    onSelect={() => pushPage('commits')}
+                  />
                 )}
               </CommandGroup>
             )}
 
             {showBranches && projectId && branchesShown.length > 0 && (
-              <CommandGroup heading="Branches">
+              <CommandGroup heading={t('groups.branches')}>
                 {branchesShown.map((b) => (
                   <CommandItem
                     key={`branch-${b.name}`}
@@ -348,11 +364,16 @@ export default function CommandPalette({
                     onSelect={() => run(() => { void git.checkout(b.name); onShowTab?.('git'); })}
                   >
                     <GitMerge className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-                    <span className="flex-1 truncate">Switch to: {b.name}</span>
+                    <span className="flex-1 truncate">
+                      {t('branch.switchTo', { name: b.name })}
+                    </span>
                   </CommandItem>
                 ))}
                 {!page && branches.length > browseLimit && (
-                  <BrowseAllItem label={`Browse all branches (${branches.length})`} onSelect={() => pushPage('branches')} />
+                  <BrowseAllItem
+                    label={t('browseAll.branches', { count: branches.length })}
+                    onSelect={() => pushPage('branches')}
+                  />
                 )}
               </CommandGroup>
             )}

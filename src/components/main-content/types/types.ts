@@ -57,6 +57,15 @@ export type MainContentProps = {
   onShowSettings: (tab?: SettingsMainTab) => void;
   externalMessageUpdate: number;
   newSessionTrigger: number;
+  // Wired from useProjectsState.handleGoHome (clicking the brand wordmark)
+  onGoHome?: () => void;
+  // Wired from useProjectsState.refreshProjects (empty-state refresh CTA)
+  onRefresh?: () => Promise<void> | void;
+  // Wired from AppContent to open ProjectCreationWizard (empty-state CTA)
+  onCreateProject?: () => void;
+  // Wired from AppContent for recent-projects grid in empty state
+  projects?: Project[];
+  onProjectSelect?: (project: Project) => void;
 };
 
 export type MainContentHeaderProps = {
@@ -68,12 +77,22 @@ export type MainContentHeaderProps = {
   shouldShowBrowserTab: boolean;
   isMobile: boolean;
   onMenuClick: () => void;
+  // Click on the brand wordmark in the mobile header strip.
+  onGoHome: () => void;
 };
 
 export type MainContentStateViewProps = {
   mode: 'loading' | 'empty';
   isMobile: boolean;
   onMenuClick: () => void;
+  // Click on the brand wordmark in the mobile header strip.
+  onGoHome: () => void;
+  // Empty-state CTAs (mode="empty" only). All optional so this view can also
+  // render in a context that doesn't expose the project-creation flow.
+  onCreateProject?: () => void;
+  onRefresh?: () => Promise<void> | void;
+  projects?: Project[];
+  onProjectSelect?: (project: Project) => void;
 };
 
 export type MobileMenuButtonProps = {
