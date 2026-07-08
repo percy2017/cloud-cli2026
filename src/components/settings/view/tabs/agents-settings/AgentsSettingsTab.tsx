@@ -18,15 +18,20 @@ export default function AgentsSettingsTab({
   onCodexPermissionModeChange,
   geminiPermissionMode,
   onGeminiPermissionModeChange,
+  opencodePermissions,
+  onOpencodePermissionsChange,
   projects,
 }: AgentsSettingsTabProps) {
   const [selectedAgent, setSelectedAgent] = useState<AgentProvider>('claude');
   const [selectedCategory, setSelectedCategory] = useState<AgentCategory>('account');
-  const visibleCategories = useMemo<AgentCategory[]>(() => (
-    selectedAgent === 'opencode'
-      ? ['account', 'permissions', 'mcp']
-      : ['account', 'permissions', 'mcp', 'skills']
-  ), [selectedAgent]);
+  // OpenCode shares Claude's skill catalog at the filesystem level, so the
+  // OpenCode skills provider returns the same data — the skills tab is
+  // rendered uniformly for all five providers. See
+  // `AgentCategoryContentSection.tsx` for the render switch.
+  const visibleCategories = useMemo<AgentCategory[]>(
+    () => ['account', 'permissions', 'mcp', 'skills'],
+    [],
+  );
 
   const visibleAgents = useMemo<AgentProvider[]>(() => {
     return ['claude', 'cursor', 'codex', 'gemini', 'opencode'];
@@ -97,6 +102,8 @@ export default function AgentsSettingsTab({
           onCodexPermissionModeChange={onCodexPermissionModeChange}
           geminiPermissionMode={geminiPermissionMode}
           onGeminiPermissionModeChange={onGeminiPermissionModeChange}
+          opencodePermissions={opencodePermissions}
+          onOpencodePermissionsChange={onOpencodePermissionsChange}
           projects={projects}
         />
       </div>

@@ -869,6 +869,15 @@ for the cross-provider comparison matrix.
 See [`docs/providers/agente.md`](./agente.md) for the full cross-provider comparison
 table and the auth resolution matrix.
 
+## Memory file convention
+
+Cursor's CLI does not have a single dedicated "memory" builtin comparable to `/memory` in Claude/Codex/Gemini. The convention today is project-scoped rule files:
+
+- **Filename**: `.cursorrules` (legacy) or `.cursor/rules/*.mdc` (modern). Cursor reads both at conversation start.
+- **Auto-loaded**: Cursor walks the project tree looking for `.cursorrules` at the root and any `.cursor/rules/*.mdc` glob matches. No cross-agent fallback to `AGENTS.md` or `CLAUDE.md`.
+- **UI surface**: Cursor does not expose a `/memory` slash command in the Command Palette. Rules are managed through the Cursor editor UI directly, not through the CLI runtime that CloudCLI shells into.
+- **Symbiosis with skills**: Cursor's skill catalog (under `~/.cursor/skills/`) is independent of its rule files. The two surfaces serve different purposes — see "Skills panel" above.
+
 ## See also
 
 - `server/modules/providers/README.md` — canonical provider-facet guide.

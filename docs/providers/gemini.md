@@ -796,6 +796,15 @@ for the cross-provider comparison matrix.
 See [`docs/providers/agente.md`](./agente.md) for the full cross-provider comparison
 table and the auth resolution matrix.
 
+## Memory file convention
+
+Gemini CLI's `/memory` builtin opens the project's `GEMINI.md` for editing.
+
+- **Filename**: `GEMINI.md` (literal, project root). Provider-specific — does **not** fall back to `AGENTS.md` or `CLAUDE.md`.
+- **Auto-loaded**: Gemini reads `<project>/GEMINI.md` (plus a user-scoped `~/.gemini/GEMINI.md`) on every prompt.
+- **UI surface**: Listed in the Command Palette as `/memory` with the chip `builtin`. CloudCLI lists it as-is from the provider.
+- **Symbiosis with skills**: Skills (under `~/.gemini/skills/`) and the memory file (`GEMINI.md`) share the `~/.gemini/` root — see "Skills panel" above for the lookup rules.
+
 ## See also
 
 - `server/modules/providers/README.md` — canonical provider-facet guide.

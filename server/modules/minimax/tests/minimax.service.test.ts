@@ -3,7 +3,11 @@ import test from 'node:test';
 
 // IMPORTANT: import the service before the modules that touch the database,
 // so monkey-patches below can intercept the appConfigDb construction if needed.
-import { minimaxService } from '@/modules/minimax/minimax.service.js';
+import {
+  minimaxService,
+  __clearUsageCacheForTests,
+  __setUsageRunnerForTests,
+} from '@/modules/minimax/minimax.service.js';
 import { appConfigDb } from '@/modules/database/index.js';
 import { providerMcpService } from '@/modules/providers/index.js';
 
@@ -147,4 +151,104 @@ test('getStatus reflects persistence + uvx probe', async () => {
   assert.match(status.message, /disabled/i);
 
   clearSettings();
+});
+
+// ---------------------------------------------------------------------------
+// getUsage — `mmx quota show` wrapper with 60s cache
+// ---------------------------------------------------------------------------
+
+const CANNED_GENERAL = {
+  model_name: 'general',
+  start_time: 1783540800000,
+  end_time: 1783555200000,
+  remains_time: 13_708_826,
+  current_interval_total_count: 0,
+  current_interval_usage_count: 0,
+  current_interval_remaining_percent: 94,
+  current_interval_status: 1,
+  current_weekly_total_count: 0,
+  current_weekly_usage_count: 0,
+  weekly_start_time: 1783296000000,
+  weekly_end_time: 1783900800000,
+  weekly_remains_time: 359_334_692,
+  current_weekly_remaining_percent: 50,
+  current_weekly_status: 1,
+};
+
+test('getUsage returns parsed model_remains when mmx emits valid JSON', async () => {
+  __clearUsageCacheForTests();
+  __setUsageRunnerForTests(() => ({
+    status: 0,
+    stdout: JSON.stringify({ model_remains: [CANNED_GENERAL] }),
+  }));
+
+  try {
+    const result = await minimaxService.getUsage();
+    assert.equal(result.available, true);
+    assert.equal(result.source, 'mmx');
+    assert.equal(result.model_remains.length, 1);
+    assert.equal(result.model_remains[0].model_name, 'general');
+    assert.equal(result.model_remains[0].current_interval_remaining_percent, 94);
+    assert.equal(result.model_remains[0].current_weekly_remaining_percent, 50);
+    assert.equal(typeof result.fetchedAt, 'number');
+  } finally {
+    __setUsageRunnerForTests(null);
+    __clearUsageCacheForTests();
+  }
+});
+
+test('getUsage returns unavailable when mmx is missing from PATH', async () => {
+  __clearUsageCacheForTests();
+  // Mirror spawnSync's behavior when the binary is absent.
+  const enoent = Object.assign(new Error('spawnSync mmx ENOENT'), { code: 'ENOENT' });
+  __setUsageRunnerForTests(() => ({ status: null, stdout: '', error: enoent }));
+
+  try {
+    const result = await minimaxService.getUsage();
+    assert.equal(result.available, false);
+    assert.equal(result.source, 'unavailable');
+    assert.deepEqual(result.model_remains, []);
+    assert.equal(result.reason, 'cli-error');
+  } finally {
+    __setUsageRunnerForTests(null);
+    __clearUsageCacheForTests();
+  }
+});
+
+test('getUsage caches the result within 60s', async () => {
+  __clearUsageCacheForTests();
+  let calls = 0;
+  __setUsageRunnerForTests(() => {
+    calls += 1;
+    return { status: 0, stdout: JSON.stringify({ model_remains: [CANNED_GENERAL] }) };
+  });
+
+  try {
+    await minimaxService.getUsage();
+    await minimaxService.getUsage();
+    await minimaxService.getUsage();
+    assert.equal(calls, 1, 'subsequent calls within TTL must not re-spawn mmx');
+  } finally {
+    __setUsageRunnerForTests(null);
+    __clearUsageCacheForTests();
+  }
+});
+
+test('getUsage re-spawns when force:true bypasses the cache', async () => {
+  __clearUsageCacheForTests();
+  let calls = 0;
+  __setUsageRunnerForTests(() => {
+    calls += 1;
+    return { status: 0, stdout: JSON.stringify({ model_remains: [CANNED_GENERAL] }) };
+  });
+
+  try {
+    await minimaxService.getUsage();
+    assert.equal(calls, 1);
+    await minimaxService.getUsage({ force: true });
+    assert.equal(calls, 2, 'force:true must bypass the in-process cache');
+  } finally {
+    __setUsageRunnerForTests(null);
+    __clearUsageCacheForTests();
+  }
 });

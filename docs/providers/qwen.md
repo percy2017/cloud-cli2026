@@ -435,6 +435,43 @@ MCP_PROVIDER_BUTTON_CLASSES.qwen = 'bg-primary text-primary-foreground hover:bg-
 MCP_SUPPORTS_WORKING_DIRECTORY.qwen = false;
 ```
 
+### 8.1 Managed MCP interoperability
+
+Qwen participates in the cross-provider MCP dispatcher
+([`server/modules/providers/services/mcp.service.ts`](../../server/modules/providers/services/mcp.service.ts)).
+When the user toggles **Settings → MiniMax → Enable**, the dispatcher writes
+`cloudcli-minimax` to **all six** provider configs (including Qwen) at user
+scope. Verified working entry shape in `~/.qwen/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "cloudcli-minimax": {
+      "command": "uvx",
+      "args": ["minimax-coding-plan-mcp", "-y"],
+      "env": {
+        "MINIMAX_API_KEY": "sk-cp-...",
+        "MINIMAX_API_HOST": "https://api.minimax.io"
+      }
+    }
+  }
+}
+```
+
+The `cloudli-` prefix triggers the "Managed" lock badge in
+[`src/components/mcp/view/McpServers.tsx`](../../src/components/mcp/view/McpServers.tsx#isManagedServer)
+(line ~58) — Qwen renders the badge identically to the other 5 providers.
+
+Alternative install path (CLI):
+```bash
+qwen mcp add cloudcli-minimax uvx -- minimax-coding-plan-mcp -y \
+  --env MINIMAX_API_KEY=sk-cp-... --env MINIMAX_API_HOST=https://api.minimax.io
+```
+
+`qwen mcp list` reports `cloudcli-minimax: ✓ connected`. Smoke-tested: the
+agent successfully invoked `mcp__MiniMax__web_search` and
+`mcp__MiniMax__understand_image` (see task list #111–#113).
+
 ## 9. Skills
 
 `qwen-skills.provider.ts` extends `SkillsProvider`. Two roots (project root
@@ -458,22 +495,161 @@ later if users complain.
 
 ## 10. Sessions and sessionSynchronizer
 
-**JSONL** at `~/.qwen/projects/<sanitized-cwd>/chats/*.jsonl`.
+### Where Qwen stores sessions
 
-`qwen-session-synchronizer.provider.ts`:
-- Watches `~/.qwen/projects/**/*.jsonl`.
-- `synchronize()`: parses each JSONL since last sync, groups by `session_id`.
-- `synchronizeFile(path)`: parses one file, returns provider-native session id.
+- **Transcripts:** `~/.qwen/projects/<sanitized-cwd>/chats/<session-id>.jsonl`.
+- **Sanitization rule:** the cwd segment under `projects/` replaces every
+  non-`[A-Za-z0-9-]` run with `-` (mirror of Claude's encoding). Two
+  different cwd paths that sanitize to the same string (e.g.
+  `/home/u/proj` and `/home/u:proj`) collapse into the same directory —
+  sessions from both are mixed in the same subfolder.
+- **Subagent transcripts** (if Qwen spawns sub-agents the way Claude does):
+  `<sanitized-cwd>/chats/<sessionId>/subagents/agent-<id>.jsonl`. Phase-0
+  didn't confirm whether Qwen actually writes these — **if they exist,
+  follow Claude's pattern and skip them in the synchronizer** to avoid
+  clobbering the parent row.
+- **Settings + auth:** `~/.qwen/settings.json` (no `.credentials.json` —
+  Qwen 0.19.7 removed `qwen auth`; auth via env vars or direct JSON edit).
 
-`qwen-sessions.provider.ts`:
-- `normalizeMessage(line, sessionId)`: maps event types from [section 5](#5-event-protocol--qwen---output-format-stream-json-shape)
-  to the `NormalizedMessage` envelope.
-- `fetchHistory(sessionId, { projectPath, providerSessionId })`: reads JSONL,
-  returns last N messages.
+### Chokidar watcher
 
-For the watcher hookup, mirror `sessions-watcher.service.ts:15-42`:
+`server/modules/providers/services/sessions-watcher.service.ts` registers
+chokidar with `{ interval: 6000, usePolling: true, depth: 6 }` over
+`~/.qwen/projects/`, filtering to `.jsonl` files. Qwen joins `PROVIDER_WATCH_PATHS`
+at Phase 7 of the roadmap. On each `add`/`change`:
+
+- `sessionSynchronizerService.synchronizeProviderFile('qwen', filePath)` →
+  `QwenSessionSynchronizer.synchronizeFile`.
+- After change-debouncing (max 500 ms, max-wait 2 s) the gateway emits
+  `session_upserted` WebSocket events to all connected clients.
+
+### Qwen-session-synchronizer specifics
+
+- `synchronize(since?)`: recursive scan from `~/.qwen/projects/`, restricted
+  to `…/<sanitized-cwd>/chats/*.jsonl`. Skip subagent paths.
+- `synchronizeFile(filePath)`: process a single JSONL.
+- `processSessionFile`: extract `session_id` + `cwd` from the first JSONL
+  entry, resolve the display name (Phase 0.5 must confirm whether Qwen
+  writes a `history.jsonl` analogue — if not, fall back to scanning the end
+  of the JSONL for a `user` or `result` event).
+- Default name if neither yields anything: `'Untitled Qwen Session'`.
+- Session-id resolution: checks `sessionsDb.getSessionByProviderSessionId(parsed.sessionId)`
+  first (provider-native → app id), then `sessionsDb.getSessionById`.
+
+### What the user sees in the UI (silent-drop UX)
+
+**The flow the user actually experiences when they run `qwen` in a
+terminal while CloudCLI is open:**
+
+1. User runs `qwen` in a shell on `/path/to/cwd`.
+2. Qwen writes a JSONL entry to
+   `~/.qwen/projects/<sanitized-cwd>/chats/<session-id>.jsonl` within
+   the first tool call (or first user message).
+3. CloudCLI's chokidar polling (6 s) picks up the new file, debounces
+   500 ms, and broadcasts `session_upserted` over WebSocket to all
+   connected clients.
+4. The frontend handler (`useProjectsState.ts:592-712`) does **three
+   things automatically, with no user-visible prompt**:
+   - Calls `projectsDb.createProjectPath(<cwd>)` — the **project is
+     materialized in the DB and the sidebar even if no other Qwen
+     session for that cwd existed**.
+   - Prepends the new session to `project.sessions` so it shows at
+     the top of the list.
+   - Marks `externalMessageUpdate` if the session happens to be the
+     currently open one (triggers a `refreshFromServer` of the last
+     20 messages).
+
+**There is no toast, banner, badge "NEW", slide-in animation, sound,
+or push notification.** The session appears silently. The only
+visible cue is the pulsing green dot on the sidebar row (because
+`lastActivity < 10 min` — see `SidebarSessionItem.tsx:83-145`), which
+is identical to what any active session looks like.
+
+`messageCount` in the upsert payload is hard-coded to `0`
+(`sessions-watcher.service.ts:168`) — the numeric badge next to the
+session title does not appear until the user clicks the session,
+which triggers `GET /api/providers/sessions/:id/messages` and the
+`fetchHistory` provider call.
+
+### When the UI does NOT show a Qwen session
+
+The synchronizer silently drops a file in any of these conditions:
+
+- The JSONL parse fails or yields no `session_id`.
+- The cwd cannot be resolved (Qwen doesn't write `cwd` in the first
+  record — Phase 0.5 must verify this).
+- The file lives under a `subagents/` path (intentional, see Claude's
+  rationale at `claude-session-synchronizer.provider.ts:28-37`).
+- The session row is archived (`isArchived = 1`) — the watcher skips
+  the WS broadcast but the row remains in the DB.
+
+There is no error surface in the UI for any of these.
+
+### Difference from other providers
+
+| Provider | Watch root | Native storage | Subagent handling | Drop conditions |
+|---|---|---|---|---|
+| **Claude** | `~/.claude/projects` | JSONL (mutating view) | `subagents/` skipped explicitly | no `sessionId` in first record |
+| **Codex** | `~/.codex/sessions` | JSONL | not addressed | no `payload.id` in first record |
+| **Cursor** | `~/.cursor/projects` | JSONL + `worker.log` | not addressed | **no `workspacePath=` in `worker.log`** (silent drop) |
+| **Gemini** | `~/.gemini/tmp/**/chats/` | JSONL | not addressed | no `projectPath` resolved (3-level fallback) |
+| **OpenCode** | `~/.local/share/opencode` | shared SQLite (read-only) | not applicable (single DB) | `time_archived IS NOT NULL` in SQL |
+| **Qwen** | `~/.qwen/projects` | JSONL | mirror Claude (skip `subagents/`) | TBD by Phase 0.5 (cwd resolution, title fallback) |
+
+### Known gaps (shared with all providers)
+
+These limitations exist today and Qwen inherits them by default —
+they're listed here so the integration plan doesn't accidentally
+promise them:
+
+1. **No WS replay on reconnect.** If the WebSocket drops and
+   reconnects after a long gap, `session_upserted` events emitted
+   during the gap are lost. The sidebar shows the last-known state
+   only. The reconnect event does not trigger a full `fetchProjects()`
+   re-fetch.
+2. **No `unlink` reconciliation.** Deleting a JSONL on disk does
+   not remove or archive the row. The session stays in the sidebar
+   until the user manually archives it.
+3. **No incremental rescan timer.** `synchronizeSessions()` (full
+   rescan) runs only at boot. If chokidar misses a change (rare,
+   but possible under heavy filesystem load), the row stays stale
+   until the next PM2 restart.
+4. **No `provider` index on `sessions` table.** The `sessions` schema
+   has indices on `session_id`, `provider_session_id`, `project_path`,
+   and `isArchived` — but not on `provider`. A filter by
+   `WHERE provider = 'qwen'` does a full scan + sort. Out of scope
+   for the MVP but worth filing.
+5. **In-app notification channel is a no-op.** The frontend
+   `channels.inApp` preference defaults to `true` in
+   `useSettingsController.ts:121-133`, but
+   `notification-orchestrator.service.js:210-223` only emits `webPush`
+   and `desktop` — there is no toast on session discovery.
+6. **OpenCode-style race** is partially mitigated in OpenCode only
+   (via `assignProviderSessionId` + `findLatestPendingAppSession`).
+   Qwen's behavior when the synchronizer indexes a session before
+   the WS runtime reports the provider id is **TBD** — Phase 0.5
+   should confirm whether the `chat-run-registry.service.ts`
+   path is exercised for Qwen or whether the synchronizer can
+   create phantom rows.
+
+### Wire-up snippet (Phase 7 of the roadmap)
+
 ```ts
-PROVIDER_WATCH_PATHS.qwen = { rootPath: '~/.qwen/projects' };
+// server/modules/providers/services/sessions-watcher.service.ts
+export const PROVIDER_WATCH_PATHS = {
+  claude:    { rootPath: '~/.claude/projects' },
+  codex:     { rootPath: '~/.codex/sessions' },
+  cursor:    { rootPath: '~/.cursor/projects' },
+  gemini:    { rootPath: '~/.gemini/tmp' },
+  opencode:  { rootPath: '~/.local/share/opencode' },
+  qwen:      { rootPath: '~/.qwen/projects' },         // NEW
+} as const;
+
+// isWatcherTargetFile (around line 79):
+// claude|codex|cursor → .jsonl
+// gemini → .jsonl|.json
+// opencode → basename === 'opencode.db'
+// qwen → .jsonl (mirroring claude)
 ```
 
 ## 11. Implementation roadmap
@@ -531,7 +707,7 @@ matrix dispatch, model storage, login modal mechanics).
 | Binary | `qwen` (npm `@qwen-code/qwen-code`) |
 | Engines | `node >=22.0.0` (CloudCLI pins `>=22 <23` — ✓) |
 | Default model | `qwen3-coder-plus` |
-| Auth command (TBD Phase 0) | `qwen login` (verify) |
+| Auth command | **None** (`qwen auth (removed)` in 0.19.7) — auth via env vars or direct edit of `~/.qwen/settings.json` (see § 6) |
 | Permission modes | CLI: `plan`, `default`, `auto-edit`, `auto`, `yolo`. **UI first iteration:** `['default', 'bypassPermissions']` (extend later) |
 | MCP scopes | `user`, `project` (no `local`) |
 | MCP transports | `stdio`, `http`, `sse` |
@@ -730,6 +906,18 @@ The matrix below is the new baseline.
 8. **`qwen --safe-mode`** — useful troubleshooting flag. Surface a toggle in
    advanced settings later.
 
+### 13.1 Closed since the original Phase 0 doc
+
+These were marked TBD/draft in earlier revisions and have since been resolved
+by live commands + Phase 0/1 work:
+
+- **MCP shape under `qwen mcp add`** — verified: `qwen mcp add cloudcli-minimax uvx -- minimax-coding-plan-mcp -y --env MINIMAX_API_KEY=...` writes to `~/.qwen/settings.json#mcpServers.cloudcli-minimax` with the JSON shape documented in § 8. The Qwen provider participates in `providerMcpService.addMcpServerToAllProviders` (cross-provider dispatcher) — toggling **Settings → MiniMax** ON propagates the entry to Qwen's config automatically. Toggling OFF removes it.
+- **`cloudcli-minimax` end-to-end smoke** — verified: `qwen` agent can call `mcp__MiniMax__web_search` and `mcp__MiniMax__understand_image` against the live `minimax-coding-plan-mcp` package. Tasks #109–#113 closed.
+- **Managed MCP pattern compatibility** — Qwen uses the same JSON-blob dispatcher as the other 5 providers (Claude/Codex/Cursor/Gemini/OpenCode). No Qwen-specific code in `server/modules/minimax/` is required; it reuses the cross-provider MCP service as-is.
+- **Skills tab visibility** — Qwen will participate in the Settings → Agentes → Habilidades tab once the provider facet lands in Phase 2, using the same `SkillsProvider` base class and the same per-skill enable/disable toggle that OpenCode exposes.
+- **Memory file convention** — see § 20 (`QWEN.md` with `AGENTS.md` fallback).
+- **Qwen as a managed-MCP recipient** — confirmed: Qwen is a fully participating managed-MCP sink (`cloudcli-minimax`, future managed servers like `cloudcli-browser`, etc.) via the `providerMcpService` dispatcher.
+
 ## 14. What is NOT in scope
 
 - ❌ `qwen serve` HTTP daemon integration (multi-client shared agent).
@@ -875,10 +1063,22 @@ must mirror when the qwen provider is enabled.
 | Brand color | Tailwind `red` (Aliyun red-orange) — confirm with design before merge | § 12 |
 | `tool_use` renderer | (planned) Rich (same renderers as Claude/Codex) | `toolConfigs.ts` |
 | Custom providers | (planned) Yes — multi-model like OpenCode | TBD |
-| Status | **DRAFT — plan only** | `docs/providers/agente.md` |
+| Managed MCP participation | **Yes** — `cloudcli-minimax` verified working (Phase 0 tasks #109–#113). Qwen is a fully participating sink in the `providerMcpService` dispatcher. | § 8.1 |
+| Skills panel | (planned) Shares the `SkillsProvider` base; per-skill enable/disable toggle works out-of-the-box once Phase 2 lands (same facet pattern as OpenCode). | § 9 |
+| Status | **DRAFT — plan only** (Phase 0 doc + smoke tests closed; Phases 1–8 still pending) | `docs/providers/agente.md` |
 
 See [`docs/providers/agente.md`](./agente.md) for the full cross-provider
 comparison table and the auth resolution matrix.
+
+## 20. Memory file convention
+
+Qwen CLI's `/memory` builtin opens the project's `QWEN.md` (or `AGENTS.md` if `QWEN.md`
+is not present).
+
+- **Filename**: `QWEN.md` is the canonical Qwen-specific name; falls back to `AGENTS.md` (the cross-agent standard shared with Codex and OpenCode).
+- **Auto-loaded**: Qwen reads `<project>/QWEN.md` then `<project>/AGENTS.md` on every prompt. No multi-source cascade like Claude.
+- **UI surface**: Will be listed in the Command Palette as `/memory` with the chip `builtin` once the provider is enabled. CloudCLI lists it as-is from the provider.
+- **Symbiosis with skills**: Skills live under qwen-specific folders (`~/.qwen/skills/` and `<git-root>/.qwen/skills/`, see § 9). The memory file is independent of the skills folder.
 
 When implementation starts, the qwen row of the comparative table in
 [`docs/providers/agente.md`](./agente.md) must be updated **in the same commit**:

@@ -17,6 +17,8 @@ export default function AgentCategoryContentSection({
   onCursorPermissionsChange,
   codexPermissionMode,
   onCodexPermissionModeChange,
+  opencodePermissions,
+  onOpencodePermissionsChange,
   projects,
 }: AgentCategoryContentSectionProps) {
   return (
@@ -73,6 +75,21 @@ export default function AgentCategoryContentSection({
         />
       )}
 
+      {selectedCategory === 'permissions' && selectedAgent === 'opencode' && (
+        // OpenCode's permission model is structurally different: instead of a
+        // `permissionMode` string, the user picks a primary agent (`build` vs
+        // `plan`) and toggles the `--auto` flag. Granular per-tool rules live
+        // in `~/.config/opencode/agent/<name>.md` and are out of scope for
+        // the in-UI editor — see docs/providers/opencode.md.
+        <PermissionsContent
+          agent="opencode"
+          opencodeAgent={opencodePermissions.agent}
+          onOpencodeAgentChange={(value) => onOpencodePermissionsChange({ ...opencodePermissions, agent: value })}
+          autoApprove={opencodePermissions.autoApprove}
+          onAutoApproveChange={(value) => onOpencodePermissionsChange({ ...opencodePermissions, autoApprove: value })}
+        />
+      )}
+
       {selectedCategory === 'mcp' && (
         // SettingsProject.name is populated from the DB projectId by
         // normalizeProjectForSettings, so we can map it straight through.
@@ -87,7 +104,11 @@ export default function AgentCategoryContentSection({
         />
       )}
 
-      {selectedCategory === 'skills' && selectedAgent !== 'opencode' && (
+      {selectedCategory === 'skills' && (
+        // OpenCode intentionally shares Claude's skill catalog at the
+        // filesystem level — the OpenCode skills provider scans the same
+        // ~/.claude/skills and ~/.agents/skills dirs as Claude, so the
+        // same `ProviderSkills` UI works for both.
         <ProviderSkills
           selectedProvider={selectedAgent}
           currentProjects={projects.map<SkillsProject>((project) => ({

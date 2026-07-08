@@ -440,6 +440,32 @@
         "overrideNote": "Puedes anular esto por sesión usando el botón de modo en la interfaz de chat."
       }
     },
+    "opencode": {
+      "agent": {
+        "title": "Agente principal",
+        "description": "OpenCode incluye varios agentes principales; elegí cuál se ejecuta cuando mandás un mensaje desde CloudCLI. Los subagentes (explore, general) se lanzan automáticamente.",
+        "modes": {
+          "build": {
+            "title": "Build (predeterminado)",
+            "description": "Agente de ejecución completa — lee, escribe y ejecuta comandos de shell. Usalo para tareas de implementación."
+          },
+          "plan": {
+            "title": "Plan",
+            "description": "Agente de solo lectura — explora el código y produce un plan. No puede ejecutar herramientas que muten estado."
+          }
+        }
+      },
+      "auto": {
+        "title": "Auto-aprobar permisos",
+        "label": "Pasar el flag --auto al CLI",
+        "description": "Equivalente a `opencode --auto`. Auto-aprueba cualquier permiso que no esté explícitamente denegado en las reglas de permisos del agente en disco."
+      },
+      "rulesNote": {
+        "title": "Reglas granulares de permisos",
+        "description": "Las reglas allow/ask/deny por herramienta de OpenCode no se editan desde esta UI — viven en archivos markdown junto a la definición del agente. Ejecutá `opencode agent list` para inspeccionarlas, o editalas directamente:",
+        "path": "~/.config/opencode/agent/<nombre-del-agente>.md"
+      }
+    },
     "actions": {
       "add": "Añadir"
     }
@@ -737,6 +763,33 @@
       "hideKey": "Ocultar clave",
       "saveButton": "Guardar",
       "savedToast": "Credenciales de MiniMax guardadas."
+    }
+  },
+  "minimax": {
+    "usage": {
+      "sectionTitle": "Suscripción y uso",
+      "sectionDescription": "Cuota del Token Plan desde el CLI mmx. Caché de 60 segundos — usa Actualizar para omitirla.",
+      "refresh": "Actualizar",
+      "refreshing": "Actualizando…",
+      "loading": "Cargando uso…",
+      "emptyMissingCli": "Instala el CLI mmx para ver el uso del Token Plan.",
+      "emptyCliError": "CloudCLI no pudo leer la cuota. Ejecuta `mmx auth login` para autenticarte y vuelve a intentarlo.",
+      "emptyHint": "El CLI mmx es independiente de CloudCLI y solo está disponible en este host. Instálalo desde https://docs.astral.sh/uv/.",
+      "modelIntervalLabel": "Ventana de 5 horas",
+      "modelWeeklyLabel": "Ventana semanal",
+      "resetsIn": "Se reinicia en {{value}}",
+      "remaining": "{{percent}}% restante",
+      "statusActive": "activa",
+      "statusIdle": "inactiva",
+      "statusUnknown": "desconocida",
+      "perModel": {
+        "general": "General",
+        "video": "Vídeo",
+        "image": "Imagen",
+        "audio": "Audio",
+        "speech": "Voz",
+        "music": "Música"
+      }
     }
   }
 }

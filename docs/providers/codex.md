@@ -1095,6 +1095,15 @@ for the cross-provider comparison matrix.
 See [`docs/providers/agente.md`](./agente.md) for the full cross-provider comparison
 table and the auth resolution matrix.
 
+## Memory file convention
+
+Codex CLI's `/memory` and `/init` builtins open the project's `AGENTS.md` for editing.
+
+- **Filename**: `AGENTS.md` (literal, project root). This is the cross-agent convention adopted by Codex, OpenCode, and Qwen.
+- **Auto-loaded**: Codex scans `<project>/AGENTS.md` (and parent directories up to the git root) on every prompt. Unlike Claude's three-source cascade, Codex has a single project-root convention.
+- **UI surface**: Listed in the Command Palette under "Built-in commands" as `/memory` (or `/init` to scaffold a fresh file). CloudCLI lists it as-is from the provider.
+- **Symbiosis with skills**: Skills (under `~/.agents/skills/<name>/SKILL.md`) and the memory file share the `~/.agents/` root — see "Skills panel" above for the lookup rules.
+
 ## See also
 
 - `server/modules/providers/README.md` — canonical provider-facet guide.

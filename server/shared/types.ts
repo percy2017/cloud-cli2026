@@ -376,6 +376,12 @@ export type ProviderSkillRemoveInput = {
  * `/plugin-name:skill-name`, while Codex skills use the `$skill-name` form.
  * `sourcePath` points to the skill markdown file that produced the record so
  * callers can distinguish duplicate skill names across scopes.
+ *
+ * `enabled` is stamped by the shared `SkillsProvider` based on the user's
+ * per-provider disable preferences (see `modules/providers/services/skill-state.service.ts`).
+ * It is `true` by default and `false` for skills the user has toggled off via
+ * the UI. Disabled skills are still returned in the listing so the UI can show
+ * them attenuated with a "Disabled" badge and let the user re-enable them.
  */
 export type ProviderSkill = {
   provider: LLMProvider;
@@ -386,6 +392,7 @@ export type ProviderSkill = {
   sourcePath: string;
   pluginName?: string;
   pluginId?: string;
+  enabled?: boolean;
 };
 
 /**

@@ -162,7 +162,7 @@ The provider name is a string union member in two places, both must stay in sync
 | AccountContent card | zinc-toned (gray-theme with a neutral feel) | `AccountContent.tsx:57-65` |
 | Onboarding card | `bg-zinc-100 dark:bg-zinc-800/50 border-zinc-300 dark:border-zinc-600` | `AgentConnectionsStep.tsx:33-38` |
 | `PROVIDER_META` vendor label | `name: 'OpenCode'` (not a vendor — a product) | `ProviderSelectionEmptyState.tsx:26-32` |
-| Permission modes (UI) | `['default']` only — single mode | `useChatProviderState.ts:12-18` |
+| Permission modes (UI) | OpenCode primary agents: `build` \| `plan` (selected at spawn); `--auto` CLI flag for auto-approve of non-denied permissions; per-agent permission rules (allow/ask/deny per pattern) live in `~/.config/opencode/agent/<name>.md`. See `opencode agent list` for the full set. **Not the same as Claude/Codex's `permissionMode` field** — CloudCLI passes the agent name + `--auto` flag, not a permission-mode string. | `useChatProviderState.ts:12-18` (legacy fallback still uses `default`) |
 | Default model fallback | `'anthropic/claude-sonnet-4-5'` (4-5, not 4) | `useChatProviderState.ts:17` |
 | Login command | `opencode auth login` (no `--device-auth` variant, no SaaS branch) | `ProviderLoginModal.tsx:39-41` |
 | Auth endpoint | `/api/providers/opencode/auth/status` | `src/components/provider-auth/types.ts:18` |
@@ -201,11 +201,14 @@ opencode branches are:
 - **`ProviderSelectionEmptyState.tsx:164-166`** writes `localStorage['opencode-model']` when the user picks a model in the picker.
 - **`useChatComposerState.ts:744`** has **no opencode downgrade** (unlike codex's `plan → default`). Opencode's permission mode is sent through unchanged.
 
-There is **no codex-style plugin skills surface** and **no claude-style permission flow** for
-opencode; the chat composer accepts whatever `providerModelCatalog.opencode` returns and
-sends `chat.send { options: { model, permissionMode: 'default' } }` to the gateway. The
-gateway's `spawnFn['opencode']` then shells out to `opencode run --format json ...` (see
-Runtime CLI section below).
+There is **no codex-style plugin skills surface** for opencode. The chat composer
+accepts whatever `providerModelCatalog.opencode` returns and sends
+`chat.send { options: { model, permissionMode: 'default' } }` to the gateway. The
+gateway's `spawnFn['opencode']` then shells out to `opencode run --format json ...`
+(see Runtime CLI section below). Note: the `permissionMode: 'default'` field is
+**semantically a no-op for opencode** — the CLI ignores it. The actual permission
+behavior is determined by the agent name + `--auto` flag + the agent's permission
+rules on disk; see "Permissions" section below.
 
 ### Shell / CLI tab — opencode spawn command
 
@@ -290,38 +293,35 @@ the CLI exits, `Settings.tsx:228-235` keeps the modal open so users can read the
 and the Agents tab calls `refreshProviderAuthStatuses()` to flip the dot from gray to
 zinc-500.
 
-### Skills panel — the opencode exclusion
+### Skills panel — opencode now exposes the shared catalog
 
-`ProviderSkills.tsx` is shared across all 5 providers, but **opencode is the only provider
-in the skills view that hides its own skills path**:
+`ProviderSkills.tsx` is shared across all 5 providers. The Skills tab is shown for every
+provider including opencode (`AgentsSettingsTab.tsx` no longer strips it for opencode),
+because the opencode backend facet (`opencode-skills.provider.ts`) explicitly reuses
+Claude's skill catalog and the `Agents` folder:
+
+> "OpenCode reuses Claude's skill catalog and the Agents folder via shared logic, so users
+> who configure skills once get them in both providers."
+
+`useProviderSkills.ts:164–182` hits `/api/providers/opencode/skills` (the opencode facet
+endpoint) which returns skills — they are the same skills Claude sees because the backend
+shares storage. The per-provider path label uses a friendly descriptor instead of a raw
+Claude path:
 
 ```ts
 // ProviderSkills.tsx:67
-const PROVIDER_SKILL_PATHS: Record<Exclude<SkillsProvider, 'opencode'>, string> = {
+const PROVIDER_SKILL_PATHS: Record<SkillsProvider, string> = {
   claude: '~/.claude/skills/<skill-name>/SKILL.md',
   codex: '~/.agents/skills/<skill-name>/SKILL.md',
   cursor: '~/.cursor/skills/<skill-name>/SKILL.md',
   gemini: '~/.gemini/skills/<skill-name>/SKILL.md',
+  opencode: 'Shared with Claude',
 };
 ```
 
-```ts
-// ProviderSkills.tsx:223
-const providerPath = selectedProvider === 'opencode' ? null : PROVIDER_SKILL_PATHS[selectedProvider];
-```
-
-Why? Because the **backend** (`opencode-skills.provider.ts`) is explicit about it:
-"OpenCode reuses Claude's skill catalog and the Agents folder via shared logic, so users
-who configure skills once get them in both providers." When the UI is on the opencode
-slot, the displayed path is suppressed and the data fetch + cache key remain in flux
-because:
-
-- `useProviderSkills.ts:164–182` hits `/api/providers/opencode/skills` (the opencode facet endpoint) which **does** return skills — they are the same skills Claude sees because the backend shares storage.
-- The UI just doesn't render the `~/.claude/skills/...` path label so users don't get confused about "why is opencode showing me Claude paths".
-
-REST contract, cache, refresh triggers, plugin-badge logic are all identical to Claude
-(see `claude.md` → "Skills panel" for the full table). The only delta is the
-`providerPath = null` rendering decision above.
+REST contract, cache, refresh triggers, and plugin-badge logic are all identical to Claude
+(see `claude.md` → "Skills panel" for the full table). The per-skill enable/disable toggle
+also works out-of-the-box for opencode (same `SkillsProvider` facet).
 
 ### MCP panel
 
@@ -349,13 +349,27 @@ on save/delete (`useMcpServers.ts:52-53`).
 
 ### Permissions
 
-Opencode has the **narrowest permission mode set** in the catalog
-(`server/modules/providers/services/provider-capabilities.service.ts:69–77`):
+Opencode's permission model is **structurally different** from Claude/Codex/Cursor/Gemini.
+It is **not** a `permissionMode` string passed at spawn — it is a combination of:
+
+1. **Primary agent name** — `build` (default, executes everything) or `plan` (only plans,
+   cannot execute tools that mutate state). See `opencode agent list` for the full set
+   (`build`, `plan`, `compaction`, `summary`, `title` are primary; `explore`, `general`
+   are subagents). The agent is selected at spawn time via the `--agent <name>` flag
+   or the `<agent name="...">` block in `~/.config/opencode/opencode.jsonc`.
+2. **`--auto` flag** — auto-approves any permission that is **not** explicitly denied in
+   the agent's permission rules. Without `--auto`, the CLI prompts the user in the
+   terminal for each permission not explicitly allowed.
+3. **Per-agent permission rules** — declared in `~/.config/opencode/agent/<name>.md`
+   as a JSON `permission` block with `{ permission: <tool-or-*>, action: 'allow'|'ask'|'deny', pattern: <glob> }`.
+   `opencode agent list` prints the resolved rules for each agent.
+
+**Current CloudCLI integration** (`server/modules/providers/services/provider-capabilities.service.ts:69–77`):
 
 ```ts
 opencode: {
   provider: 'opencode',
-  permissionModes: ['default'],     // only 'default' — no acceptEdits, no bypassPermissions, no plan
+  permissionModes: ['default'],     // legacy — CloudCLI still sends 'default' as the permissionMode string
   defaultPermissionMode: 'default',
   supportsImages: false,
   supportsAbort: true,
@@ -364,21 +378,34 @@ opencode: {
 },
 ```
 
-UI mirrors this in `useChatProviderState.ts:26-32` (the `FALLBACK_PERMISSION_MODES` record):
+The `permissionModes: ['default']` field is **misleading**: the OpenCode CLI does **not**
+consume a `permissionMode` string. CloudCLI just passes `'default'` because that's what
+the field demands, but the actual decision is made by the agent's permission rules on
+disk + the `--auto` flag. The legacy `'default'` value is a placeholder so the rest of
+the provider-agnostic wiring (`FALLBACK_PERMISSION_MODES`, the chat composer badge, the
+mode-cycling shortcut) doesn't break for opencode.
 
-```ts
-const FALLBACK_PERMISSION_MODES: Record<LLMProvider, PermissionMode[]> = {
-  // ...
-  opencode: ['default'],
-};
-```
+**Consequences and follow-ups:**
 
-**Consequences:**
-
-- The chat composer's permission-mode badge (`useChatComposerState.ts:370–374`) only ever renders `default` for opencode. There's no mode-cycle shortcut (the cycling logic at `useChatProviderState.ts:284-298` skips non-existent modes).
-- **`useChatComposerState.ts:744`** has **no** opencode downgrade clause. The only provider-specific downgrade is `provider === 'codex' && permissionMode === 'plan' ? 'default' : permissionMode`. Opencode sends `default` unchanged.
-- There's no `OpencodePermissions` component. The Settings → Agents → Permissions tab uses the generic `PermissionsContent` dispatcher (`PermissionsContent.tsx`) which routes by `agent` to a dedicated component per provider — opencode currently has no dedicated branch, so it falls through to a no-op or renders the default radio placeholder. This is asymmetric with `CodexPermissions` (`PermissionsContent.tsx:479–580`) which is dedicated. If you're adding a dedicated opencode permissions UI in the future, look at the CodexPermissions pattern; the `permissionModes: ['default']` constraint is the only reason it hasn't been needed yet.
-- **No `canUseTool` flow.** Opencode has `supportsPermissionRequests: false`, so its subprocess never sends a `permission_request` frame — chat-websocket doesn't intercept anything mid-stream. The chat composer just sends the message and the gateway shells out to `opencode run`. (Contrast Claude, which has the full `canUseTool` / `permission_request` / `permission_cancelled` flow described in `claude.md` → "Permissions and tools".)
+- The chat composer's permission-mode badge (`useChatComposerState.ts:370–374`) only
+  ever renders `default` for opencode. There's no mode-cycle shortcut (the cycling
+  logic at `useChatProviderState.ts:284-298` skips non-existent modes). **This is
+  misleading UX** — selecting opencode + clicking the mode cycle button does nothing
+  visible. The badge should either be hidden for opencode or show "build/plan" + "--auto".
+- **`useChatComposerState.ts:744`** has **no** opencode downgrade clause. Opencode sends
+  `default` unchanged. (Same root cause as above — the field is a no-op for opencode.)
+- **Settings → Agents → OpenCode → Permisos tab is currently empty** — see
+  `AgentCategoryContentSection.tsx`. There are render branches for `claude`, `cursor`,
+  and `codex`, but no branch for `opencode`. The proper fix is a dedicated
+  `OpencodePermissions` component that shows the primary agent picker + the `--auto`
+  toggle + a read-only summary of the agent's permission rules (parsed from
+  `~/.config/opencode/agent/<name>.md`). The interactive rule editor is **out of scope**
+  — editing those files from the UI would conflict with `opencode agent create/list`.
+  See task #142 for the plan.
+- **No `canUseTool` flow.** Opencode has `supportsPermissionRequests: false`, so its
+  subprocess never sends a `permission_request` frame — chat-websocket doesn't intercept
+  anything mid-stream. The chat composer just sends the message and the gateway shells
+  out to `opencode run [--agent <name>] [--auto] ...`.
 
 ### Icon + provider identity (legacy note)
 
@@ -587,6 +614,15 @@ for the cross-provider comparison matrix.
 
 See [`docs/providers/agente.md`](./agente.md) for the full cross-provider comparison
 table and the auth resolution matrix.
+
+## Memory file convention
+
+OpenCode's `/memory` builtin opens the project's `AGENTS.md` for editing.
+
+- **Filename**: `AGENTS.md` (literal, project root). Same convention as Codex and Qwen — they share an open cross-agent standard.
+- **Auto-loaded**: OpenCode reads `<project>/AGENTS.md` on every prompt. No multi-source cascade like Claude; single project-root file.
+- **UI surface**: Listed in the Command Palette as `/memory` with the chip `builtin`. CloudCLI lists it as-is from the provider.
+- **Symbiosis with skills**: OpenCode's skill catalog is reused from Claude's (`~/.claude/skills/`) and the `~/.agents/skills/` shared root (see "Skills panel" above), but the **memory file is `AGENTS.md`, not `CLAUDE.md`**. The two surfaces do not collide.
 
 ## See also
 

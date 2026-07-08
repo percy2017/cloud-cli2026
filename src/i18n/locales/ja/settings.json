@@ -411,6 +411,32 @@
         "overrideNote": "チャットインターフェースのモードボタンを使用してセッションごとに上書きできます。"
       }
     },
+    "opencode": {
+      "agent": {
+        "title": "Primary Agent",
+        "description": "OpenCode ships multiple primary agents; pick which one runs when you send a message from CloudCLI. Subagents (explore, general) are spawned automatically.",
+        "modes": {
+          "build": {
+            "title": "Build (default)",
+            "description": "Full execution agent — reads, writes, runs shell commands. Use for implementation tasks."
+          },
+          "plan": {
+            "title": "Plan",
+            "description": "Read-only agent — explores the codebase and produces a plan. Cannot execute tools that mutate state."
+          }
+        }
+      },
+      "auto": {
+        "title": "Auto-approve permissions",
+        "label": "Pass --auto flag to the CLI",
+        "description": "Equivalent to `opencode --auto`. Auto-approves any permission that is not explicitly denied in the agent's permission rules on disk."
+      },
+      "rulesNote": {
+        "title": "Granular permission rules",
+        "description": "OpenCode's per-tool allow/ask/deny rules are not editable from this UI — they live in markdown files alongside the agent definition. Run `opencode agent list` to inspect them, or edit them directly:",
+        "path": "~/.config/opencode/agent/<agent-name>.md"
+      }
+    },
     "actions": {
       "add": "追加"
     }
@@ -484,5 +510,32 @@
     "installAriaLabel": "プラグインのgitリポジトリURL",
     "tab": "タブ",
     "runningStatus": "実行中"
+  },
+  "minimax": {
+    "usage": {
+      "sectionTitle": "Subscription & usage",
+      "sectionDescription": "Token Plan quota from the mmx CLI. Cached for 60 seconds — use Refresh to bypass.",
+      "refresh": "Refresh",
+      "refreshing": "Refreshing…",
+      "loading": "Loading usage…",
+      "emptyMissingCli": "Install the mmx CLI to see Token Plan usage.",
+      "emptyCliError": "CloudCLI couldn't read quota. Run `mmx auth login` to authenticate, then refresh.",
+      "emptyHint": "The mmx CLI is separate from CloudCLI and is only available on this host. Install it from https://docs.astral.sh/uv/.",
+      "modelIntervalLabel": "5-hour window",
+      "modelWeeklyLabel": "Weekly window",
+      "resetsIn": "Resets in {{value}}",
+      "remaining": "{{percent}}% remaining",
+      "statusActive": "active",
+      "statusIdle": "idle",
+      "statusUnknown": "unknown",
+      "perModel": {
+        "general": "General",
+        "video": "Video",
+        "image": "Image",
+        "audio": "Audio",
+        "speech": "Speech",
+        "music": "Music"
+      }
+    }
   }
 }

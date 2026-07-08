@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { mkdir, rm, stat, writeFile } from 'node:fs/promises';
 
+import { skillStateService } from '@/modules/providers/services/skill-state.service.js';
 import type { IProviderSkills } from '@/shared/interfaces.js';
 import type {
   LLMProvider,
@@ -124,7 +125,7 @@ export abstract class SkillsProvider implements IProviderSkills {
       }
     }
 
-    return skills;
+    return this.stampDisabledState(skills);
   }
 
   async addSkills(input: ProviderSkillCreateInput): Promise<ProviderSkill[]> {
@@ -283,5 +284,22 @@ export abstract class SkillsProvider implements IProviderSkills {
 
   protected async getGlobalSkillSource(): Promise<ProviderSkillSource | null> {
     return null;
+  }
+
+  /**
+   * Stamps each skill with `enabled` based on the per-provider disable set
+   * (see `skill-state.service.ts`). Disabled skills are kept in the list with
+   * `enabled: false` so the UI can render them attenuated with a badge and
+   * offer a re-enable action.
+   *
+   * Provider overrides that merge their own list (e.g. Claude's plugin
+   * skills) should call this method on the merged result.
+   */
+  protected stampDisabledState(skills: ProviderSkill[]): ProviderSkill[] {
+    const disabled = skillStateService.readDisabledSet(this.provider);
+    return skills.map((skill) => ({
+      ...skill,
+      enabled: !disabled.has(skill.sourcePath),
+    }));
   }
 }

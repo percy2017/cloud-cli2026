@@ -441,6 +441,58 @@ router.delete(
   }),
 );
 
+const parseProviderSkillStatePayload = (payload: unknown): { enabled: boolean } => {
+  if (!payload || typeof payload !== 'object') {
+    throw new AppError('Request body must be an object.', {
+      code: 'INVALID_REQUEST_BODY',
+      statusCode: 400,
+    });
+  }
+
+  const body = payload as Record<string, unknown>;
+  if (body.enabled === true || body.enabled === false) {
+    return { enabled: body.enabled };
+  }
+
+  throw new AppError('enabled (boolean) is required.', {
+    code: 'PROVIDER_SKILL_STATE_INVALID',
+    statusCode: 400,
+  });
+};
+
+router.put(
+  '/:provider/skills/state',
+  asyncHandler(async (req: Request, res: Response) => {
+    const provider = parseProvider(req.params.provider);
+    const workspacePath = readOptionalQueryString(req.query.workspacePath);
+    const { enabled } = parseProviderSkillStatePayload(req.body);
+    const result = await providerSkillsService.setAllSkillsEnabled(provider, enabled, {
+      workspacePath,
+    });
+    res.json(createApiSuccessResponse(result));
+  }),
+);
+
+router.put(
+  '/:provider/skills/:skillKey/state',
+  asyncHandler(async (req: Request, res: Response) => {
+    const provider = parseProvider(req.params.provider);
+    const skillKey = readPathParam(req.params.skillKey, 'skillKey');
+    const { enabled } = parseProviderSkillStatePayload(req.body);
+    const result = await providerSkillsService.setSkillEnabled(provider, skillKey, enabled);
+    res.json(createApiSuccessResponse(result));
+  }),
+);
+
+router.get(
+  '/:provider/skills/disabled',
+  asyncHandler(async (req: Request, res: Response) => {
+    const provider = parseProvider(req.params.provider);
+    const disabledKeys = await providerSkillsService.listDisabledKeys(provider);
+    res.json(createApiSuccessResponse({ provider, disabledKeys }));
+  }),
+);
+
 // ----------------- MCP routes -----------------
 router.get(
   '/:provider/mcp/servers',

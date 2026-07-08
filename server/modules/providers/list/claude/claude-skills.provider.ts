@@ -94,10 +94,13 @@ export class ClaudeSkillsProvider extends SkillsProvider {
   }
 
   async listSkills(options?: ProviderSkillListOptions): Promise<ProviderSkill[]> {
-    return [
+    const merged = [
       ...(await super.listSkills(options)),
       ...(await this.listPluginSkills(getClaudeHomePath())),
     ];
+    // Claude merges base skills with plugin skills after `super.listSkills`
+    // already stamped the base set, so we re-stamp the merged list here.
+    return this.stampDisabledState(merged);
   }
 
   protected async getSkillSources(workspacePath: string): Promise<ProviderSkillSource[]> {

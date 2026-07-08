@@ -683,7 +683,130 @@ function GeminiPermissions({ permissionMode, onPermissionModeChange }: Omit<Gemi
   );
 }
 
-type PermissionsContentProps = ClaudePermissionsProps | CursorPermissionsProps | CodexPermissionsProps | GeminiPermissionsProps;
+type OpencodePermissionsProps = {
+  agent: 'opencode';
+  opencodeAgent: 'build' | 'plan';
+  onOpencodeAgentChange: (value: 'build' | 'plan') => void;
+  autoApprove: boolean;
+  onAutoApproveChange: (value: boolean) => void;
+};
+
+function OpencodePermissions({
+  opencodeAgent,
+  onOpencodeAgentChange,
+  autoApprove,
+  onAutoApproveChange,
+}: Omit<OpencodePermissionsProps, 'agent'>) {
+  const { t } = useTranslation('settings');
+  return (
+    <div className="space-y-6">
+      <div className="space-y-4">
+        <div className="flex items-center gap-3">
+          <Shield className="h-5 w-5 text-green-500" />
+          <h3 className="text-lg font-medium text-foreground">
+            {t('permissions.opencode.agent.title')}
+          </h3>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          {t('permissions.opencode.agent.description')}
+        </p>
+
+        <div
+          className={`cursor-pointer rounded-lg border p-4 transition-all ${opencodeAgent === 'build'
+            ? 'border-green-400 bg-green-50 dark:border-green-600 dark:bg-green-900/20'
+            : 'border-border bg-card/50 active:border-border active:bg-accent/50'
+            }`}
+          onClick={() => onOpencodeAgentChange('build')}
+        >
+          <label className="flex cursor-pointer items-start gap-3">
+            <input
+              type="radio"
+              name="opencodeAgent"
+              checked={opencodeAgent === 'build'}
+              onChange={() => onOpencodeAgentChange('build')}
+              className="mt-1 h-4 w-4 text-green-600"
+            />
+            <div>
+              <div className="font-medium text-green-900 dark:text-green-100">
+                {t('permissions.opencode.agent.modes.build.title')}
+              </div>
+              <div className="text-sm text-green-700 dark:text-green-300">
+                {t('permissions.opencode.agent.modes.build.description')}
+              </div>
+            </div>
+          </label>
+        </div>
+
+        <div
+          className={`cursor-pointer rounded-lg border p-4 transition-all ${opencodeAgent === 'plan'
+            ? 'border-blue-400 bg-blue-50 dark:border-blue-600 dark:bg-blue-900/20'
+            : 'border-border bg-card/50 active:border-border active:bg-accent/50'
+            }`}
+          onClick={() => onOpencodeAgentChange('plan')}
+        >
+          <label className="flex cursor-pointer items-start gap-3">
+            <input
+              type="radio"
+              name="opencodeAgent"
+              checked={opencodeAgent === 'plan'}
+              onChange={() => onOpencodeAgentChange('plan')}
+              className="mt-1 h-4 w-4 text-blue-600"
+            />
+            <div>
+              <div className="font-medium text-blue-900 dark:text-blue-100">
+                {t('permissions.opencode.agent.modes.plan.title')}
+              </div>
+              <div className="text-sm text-blue-700 dark:text-blue-300">
+                {t('permissions.opencode.agent.modes.plan.description')}
+              </div>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        <div className="flex items-center gap-3">
+          <AlertTriangle className="h-5 w-5 text-orange-500" />
+          <h3 className="text-lg font-medium text-foreground">
+            {t('permissions.opencode.auto.title')}
+          </h3>
+        </div>
+        <div className="rounded-lg border border-orange-200 bg-orange-50 p-4 dark:border-orange-800 dark:bg-orange-900/20">
+          <label className="flex items-center gap-3">
+            <input
+              type="checkbox"
+              checked={autoApprove}
+              onChange={(event) => onAutoApproveChange(event.target.checked)}
+              className="h-4 w-4 rounded border-input bg-card text-primary focus:ring-2 focus:ring-primary"
+            />
+            <div>
+              <div className="font-medium text-orange-900 dark:text-orange-100">
+                {t('permissions.opencode.auto.label')}
+              </div>
+              <div className="text-sm text-orange-700 dark:text-orange-300">
+                {t('permissions.opencode.auto.description')}
+              </div>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-700 dark:bg-zinc-900/20">
+        <h4 className="mb-2 font-medium text-zinc-900 dark:text-zinc-100">
+          {t('permissions.opencode.rulesNote.title')}
+        </h4>
+        <p className="text-sm text-zinc-800 dark:text-zinc-200">
+          {t('permissions.opencode.rulesNote.description')}
+        </p>
+        <code className="mt-2 block whitespace-pre-wrap break-all rounded bg-zinc-100 px-2 py-1 text-xs text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100">
+          {t('permissions.opencode.rulesNote.path')}
+        </code>
+      </div>
+    </div>
+  );
+}
+
+type PermissionsContentProps = ClaudePermissionsProps | CursorPermissionsProps | CodexPermissionsProps | GeminiPermissionsProps | OpencodePermissionsProps;
 
 export default function PermissionsContent(props: PermissionsContentProps) {
   if (props.agent === 'claude') {
@@ -696,6 +819,10 @@ export default function PermissionsContent(props: PermissionsContentProps) {
 
   if (props.agent === 'gemini') {
     return <GeminiPermissions {...props} />;
+  }
+
+  if (props.agent === 'opencode') {
+    return <OpencodePermissions {...props} />;
   }
 
   return <CodexPermissions {...props} />;

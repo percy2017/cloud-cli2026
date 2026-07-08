@@ -21,6 +21,57 @@ const MCP_COMMAND = 'uvx';
 const MCP_ARGS = ['minimax-coding-plan-mcp', '-y'];
 const DEFAULT_API_HOST = 'https://api.minimax.io';
 const UVX_PROBE_TIMEOUT_MS = 5000;
+const USAGE_CACHE_TTL_MS = 60_000;
+const MMX_TIMEOUT_MS = 8_000;
+const MMX_PROBE_TIMEOUT_MS = 5_000;
+const MMX_BIN = 'mmx';
+const MMX_QUOTA_ARGS = ['quota', 'show', '--output', 'json', '--non-interactive'];
+
+// Quota data returned by `mmx quota show --output json`. Field names match the
+// CLI verbatim so frontend diffs are easy. See `mmx quota show --help`.
+type ModelRemain = {
+  model_name: string;
+  start_time: number;
+  end_time: number;
+  remains_time: number;
+  current_interval_total_count: number;
+  current_interval_usage_count: number;
+  current_interval_remaining_percent: number;
+  current_interval_status: number;
+  current_weekly_total_count: number;
+  current_weekly_usage_count: number;
+  weekly_start_time: number;
+  weekly_end_time: number;
+  weekly_remains_time: number;
+  current_weekly_remaining_percent: number;
+  current_weekly_status: number;
+};
+
+type UsageUnavailableReason = 'missing-cli' | 'cli-error';
+
+type UsageResult =
+  | { available: true; source: 'mmx'; fetchedAt: number; model_remains: ModelRemain[] }
+  | {
+      available: false;
+      source: 'unavailable';
+      fetchedAt: number;
+      model_remains: [];
+      reason: UsageUnavailableReason;
+    };
+
+// In-process cache slot. Single entry is enough — quota is not chat-frequency
+// sensitive and one user is the only consumer.
+let usageCache: { result: UsageResult; expiresAt: number } | null = null;
+
+// Injectable runner — production default shells out via spawnSync. Tests swap
+// this out to inject canned results without monkey-patching `node:child_process`.
+type SpawnResult = { status: number | null; stdout: string; error?: Error };
+type SpawnRunner = (cmd: string, args: string[]) => SpawnResult;
+const defaultRunner: SpawnRunner = (cmd, args) => {
+  const r = spawnSync(cmd, args, { timeout: MMX_TIMEOUT_MS, encoding: 'utf8' });
+  return { status: r.status, stdout: r.stdout ?? '', error: r.error ?? undefined };
+};
+let runner: SpawnRunner = defaultRunner;
 
 type MiniMaxSettings = {
   enabled: boolean;
@@ -75,6 +126,35 @@ function probeUvx(): boolean {
   } catch {
     return false;
   }
+}
+
+function probeMmx(): boolean {
+  try {
+    const result = spawnSync('which', [MMX_BIN], { timeout: MMX_PROBE_TIMEOUT_MS });
+    return result.status === 0 && Boolean(result.stdout?.toString().trim());
+  } catch {
+    return false;
+  }
+}
+
+function parseUsageJson(stdout: string): ModelRemain[] | null {
+  try {
+    const parsed = JSON.parse(stdout) as { model_remains?: unknown };
+    if (!parsed || !Array.isArray(parsed.model_remains)) {
+      return null;
+    }
+    return parsed.model_remains.filter(isModelRemain);
+  } catch {
+    return null;
+  }
+}
+
+function isModelRemain(value: unknown): value is ModelRemain {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const entry = value as Record<string, unknown>;
+  return typeof entry.model_name === 'string';
 }
 
 function hasUsableCredentials(settings: MiniMaxSettings): boolean {
@@ -181,4 +261,71 @@ export const minimaxService = {
     });
     return { name: MCP_SERVER_NAME, results };
   },
+
+  /**
+   * Read the Token Plan quota snapshot from the `mmx` CLI.
+   *
+   * Returns a discriminated union: `available: true` carries parsed
+   * `model_remains[]`; `available: false` carries a `reason` so the UI can
+   * pick between "install mmx" and "run `mmx auth login`" copy.
+   *
+   * Cached for `USAGE_CACHE_TTL_MS` (60s) per process. Pass `{ force: true }`
+   * to bypass (used by the manual Refresh button and by tests).
+   */
+  async getUsage(opts: { force?: boolean } = {}): Promise<UsageResult> {
+    const now = Date.now();
+    if (!opts.force && usageCache && usageCache.expiresAt > now) {
+      return usageCache.result;
+    }
+
+    let result: UsageResult;
+    if (!probeMmx()) {
+      result = {
+        available: false,
+        source: 'unavailable',
+        fetchedAt: now,
+        model_remains: [],
+        reason: 'missing-cli',
+      };
+    } else {
+      const r = runner(MMX_BIN, MMX_QUOTA_ARGS);
+      if (r.error || r.status !== 0 || !r.stdout) {
+        result = {
+          available: false,
+          source: 'unavailable',
+          fetchedAt: now,
+          model_remains: [],
+          reason: 'cli-error',
+        };
+      } else {
+        const parsed = parseUsageJson(r.stdout);
+        if (parsed === null) {
+          result = {
+            available: false,
+            source: 'unavailable',
+            fetchedAt: now,
+            model_remains: [],
+            reason: 'cli-error',
+          };
+        } else {
+          result = { available: true, source: 'mmx', fetchedAt: now, model_remains: parsed };
+        }
+      }
+    }
+
+    usageCache = { result, expiresAt: now + USAGE_CACHE_TTL_MS };
+    return result;
+  },
 };
+
+// Test seams. Underscore-prefixed names signal "do not import from production
+// code". `__clearUsageCacheForTests` resets the cache slot; `__setUsageRunnerForTests`
+// swaps the spawn runner so tests can inject canned stdout without touching
+// `node:child_process`.
+export function __clearUsageCacheForTests(): void {
+  usageCache = null;
+}
+
+export function __setUsageRunnerForTests(fn: SpawnRunner | null): void {
+  runner = fn ?? defaultRunner;
+}

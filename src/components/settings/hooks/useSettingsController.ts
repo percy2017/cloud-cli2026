@@ -16,6 +16,8 @@ import type {
   CursorPermissionsState,
   GeminiPermissionMode,
   NotificationPreferencesState,
+  OpencodeAgent,
+  OpencodePermissionsState,
   ProjectSortOrder,
   SettingsMainTab,
 } from '../types/types';
@@ -46,6 +48,18 @@ type CursorSettingsStorage = {
 type CodexSettingsStorage = {
   permissionMode?: CodexPermissionMode;
 };
+
+type OpencodeSettingsStorage = {
+  agent?: OpencodeAgent;
+  autoApprove?: boolean;
+};
+
+const toOpencodeAgent = (value: unknown): OpencodeAgent => (value === 'plan' ? 'plan' : 'build');
+
+const createDefaultOpencodePermissions = (): OpencodePermissionsState => ({
+  agent: 'build',
+  autoApprove: false,
+});
 
 type NotificationPreferencesResponse = {
   success?: boolean;
@@ -160,6 +174,9 @@ export function useSettingsController({ isOpen, initialTab }: UseSettingsControl
   ));
   const [codexPermissionMode, setCodexPermissionMode] = useState<CodexPermissionMode>('default');
   const [geminiPermissionMode, setGeminiPermissionMode] = useState<GeminiPermissionMode>('default');
+  const [opencodePermissions, setOpencodePermissions] = useState<OpencodePermissionsState>(() => (
+    createDefaultOpencodePermissions()
+  ));
 
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [loginProvider, setLoginProvider] = useState<ActiveLoginProvider>('');
@@ -204,6 +221,15 @@ export function useSettingsController({ isOpen, initialTab }: UseSettingsControl
       );
       setGeminiPermissionMode(savedGeminiSettings.permissionMode || 'default');
 
+      const savedOpencodeSettings = parseJson<OpencodeSettingsStorage>(
+        localStorage.getItem('opencode-settings'),
+        {},
+      );
+      setOpencodePermissions({
+        agent: toOpencodeAgent(savedOpencodeSettings.agent),
+        autoApprove: Boolean(savedOpencodeSettings.autoApprove),
+      });
+
       try {
         const notificationResponse = await authenticatedFetch('/api/settings/notification-preferences');
         if (notificationResponse.ok) {
@@ -226,6 +252,7 @@ export function useSettingsController({ isOpen, initialTab }: UseSettingsControl
       setCursorPermissions(createEmptyCursorPermissions());
       setNotificationPreferences(createDefaultNotificationPreferences());
       setCodexPermissionMode('default');
+      setOpencodePermissions(createDefaultOpencodePermissions());
       setProjectSortOrder('name');
     }
   }, []);
@@ -278,6 +305,12 @@ export function useSettingsController({ isOpen, initialTab }: UseSettingsControl
 
       localStorage.setItem('gemini-settings', JSON.stringify({
         permissionMode: geminiPermissionMode,
+        lastUpdated: now,
+      }));
+
+      localStorage.setItem('opencode-settings', JSON.stringify({
+        agent: opencodePermissions.agent,
+        autoApprove: opencodePermissions.autoApprove,
         lastUpdated: now,
       }));
 
@@ -411,6 +444,8 @@ export function useSettingsController({ isOpen, initialTab }: UseSettingsControl
     providerAuthStatus,
     geminiPermissionMode,
     setGeminiPermissionMode,
+    opencodePermissions,
+    setOpencodePermissions,
     openLoginForProvider,
     showLoginModal,
     setShowLoginModal,

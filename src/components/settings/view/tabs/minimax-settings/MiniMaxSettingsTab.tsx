@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link2, Loader2 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import { Link2, Loader2, RefreshCw } from 'lucide-react';
 
 import { authenticatedFetch } from '../../../../../utils/api';
 import SettingsCard from '../../SettingsCard';
@@ -16,6 +17,36 @@ type MiniMaxStatus = {
   message: string;
 };
 
+// Quota data returned by `GET /api/minimax/usage`. Field names match the
+// `mmx quota show --output json` shape verbatim.
+type ModelRemain = {
+  model_name: string;
+  start_time: number;
+  end_time: number;
+  remains_time: number;
+  current_interval_total_count: number;
+  current_interval_usage_count: number;
+  current_interval_remaining_percent: number;
+  current_interval_status: number;
+  current_weekly_total_count: number;
+  current_weekly_usage_count: number;
+  weekly_start_time: number;
+  weekly_end_time: number;
+  weekly_remains_time: number;
+  current_weekly_remaining_percent: number;
+  current_weekly_status: number;
+};
+
+type UsageResult =
+  | { available: true; source: 'mmx'; fetchedAt: number; model_remains: ModelRemain[] }
+  | {
+      available: false;
+      source: 'unavailable';
+      fetchedAt: number;
+      model_remains: [];
+      reason: 'missing-cli' | 'cli-error';
+    };
+
 async function readJson<T>(response: Response): Promise<T> {
   const data = await response.json();
   if (!response.ok || data.success === false) {
@@ -24,15 +55,104 @@ async function readJson<T>(response: Response): Promise<T> {
   return data as T;
 }
 
+function formatRemains(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) {
+    return '—';
+  }
+  const totalSec = Math.floor(ms / 1000);
+  const d = Math.floor(totalSec / 86400);
+  const h = Math.floor((totalSec % 86400) / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  if (d > 0) {
+    return `${d}d ${h}h`;
+  }
+  if (h > 0) {
+    return `${h}h ${m}m`;
+  }
+  if (m > 0) {
+    return `${m}m ${s}s`;
+  }
+  return `${s}s`;
+}
+
+function progressColor(percent: number): string {
+  if (percent >= 50) {
+    return 'bg-emerald-500';
+  }
+  if (percent >= 20) {
+    return 'bg-amber-500';
+  }
+  return 'bg-red-500';
+}
+
+function statusLabelKey(status: number, t: (key: string) => string): string {
+  if (status === 1) {
+    return t('minimax.usage.statusActive');
+  }
+  if (status === 3) {
+    return t('minimax.usage.statusIdle');
+  }
+  return t('minimax.usage.statusUnknown');
+}
+
+function statusPillClass(status: number): string {
+  if (status === 1) {
+    return 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-700/50 dark:bg-emerald-950/30 dark:text-emerald-200';
+  }
+  if (status === 3) {
+    return 'border-border bg-muted text-muted-foreground';
+  }
+  return 'border-border bg-muted text-muted-foreground';
+}
+
+type ProgressBarProps = {
+  percent: number;
+  ariaLabel: string;
+  showLabel?: boolean;
+};
+
+function ProgressBar({ percent, ariaLabel, showLabel = true }: ProgressBarProps) {
+  const clamped = Math.max(0, Math.min(100, percent));
+  return (
+    <div className="flex items-center gap-3">
+      <div
+        role="progressbar"
+        aria-label={ariaLabel}
+        aria-valuenow={clamped}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        className="relative h-2.5 w-full overflow-hidden rounded-full bg-muted"
+      >
+        <div
+          className={`h-full transition-all duration-300 ${progressColor(clamped)}`}
+          style={{ width: `${clamped}%` }}
+        />
+      </div>
+      {showLabel && (
+        <span
+          className="min-w-[3rem] text-right font-mono text-xs font-semibold tabular-nums text-foreground"
+          aria-hidden="true"
+        >
+          {clamped}%
+        </span>
+      )}
+    </div>
+  );
+}
+
 type MiniMaxSettingsTabProps = {
   onNavigateToCredentials: (tab: SettingsMainTab) => void;
 };
 
 export default function MiniMaxSettingsTab({ onNavigateToCredentials }: MiniMaxSettingsTabProps) {
+  const { t } = useTranslation('settings');
   const [enabled, setEnabled] = useState(false);
   const [status, setStatus] = useState<MiniMaxStatus | null>(null);
+  const [usage, setUsage] = useState<UsageResult | null>(null);
   const [isSettingsLoading, setIsSettingsLoading] = useState(true);
   const [isStatusLoading, setIsStatusLoading] = useState(true);
+  const [isUsageLoading, setIsUsageLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -48,10 +168,18 @@ export default function MiniMaxSettingsTab({ onNavigateToCredentials }: MiniMaxS
     setStatus(data.data);
   }, []);
 
+  const loadUsage = useCallback(async (force = false) => {
+    const url = force ? '/api/minimax/usage?force=1' : '/api/minimax/usage';
+    const response = await authenticatedFetch(url);
+    const data = await readJson<{ data: UsageResult }>(response);
+    setUsage(data.data);
+  }, []);
+
   useEffect(() => {
     setError(null);
     setIsSettingsLoading(true);
     setIsStatusLoading(true);
+    setIsUsageLoading(true);
 
     void loadEnabled()
       .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load MiniMax settings'))
@@ -60,7 +188,11 @@ export default function MiniMaxSettingsTab({ onNavigateToCredentials }: MiniMaxS
     void loadStatus()
       .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load MiniMax status'))
       .finally(() => setIsStatusLoading(false));
-  }, [loadEnabled, loadStatus]);
+
+    void loadUsage()
+      .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load MiniMax usage'))
+      .finally(() => setIsUsageLoading(false));
+  }, [loadEnabled, loadStatus, loadUsage]);
 
   const updateEnabled = async (next: boolean) => {
     setIsSaving(true);
@@ -79,6 +211,18 @@ export default function MiniMaxSettingsTab({ onNavigateToCredentials }: MiniMaxS
     } finally {
       setIsStatusLoading(false);
       setIsSaving(false);
+    }
+  };
+
+  const refreshUsage = async () => {
+    setIsUsageLoading(true);
+    setError(null);
+    try {
+      await loadUsage(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load MiniMax usage');
+    } finally {
+      setIsUsageLoading(false);
     }
   };
 
@@ -151,15 +295,120 @@ export default function MiniMaxSettingsTab({ onNavigateToCredentials }: MiniMaxS
                 </div>
               </div>
             )}
-
-            {error && (
-              <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-200">
-                {error}
-              </div>
-            )}
           </div>
         </SettingsCard>
       </SettingsSection>
+
+      <SettingsSection
+        title={t('minimax.usage.sectionTitle')}
+        description={t('minimax.usage.sectionDescription')}
+      >
+        <SettingsCard>
+          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+            <div className="text-sm font-medium text-foreground">
+              {t('minimax.usage.sectionTitle')}
+            </div>
+            <button
+              type="button"
+              onClick={() => void refreshUsage()}
+              disabled={isUsageLoading}
+              aria-label={t('minimax.usage.refresh')}
+              className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1 text-xs font-medium text-foreground hover:bg-accent disabled:opacity-50"
+            >
+              {isUsageLoading ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="h-3.5 w-3.5" />
+              )}
+              {isUsageLoading
+                ? t('minimax.usage.refreshing')
+                : t('minimax.usage.refresh')}
+            </button>
+          </div>
+
+          {isUsageLoading && !usage ? (
+            <div className="flex items-center gap-2 px-4 pb-4 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              {t('minimax.usage.loading')}
+            </div>
+          ) : usage?.available === false ? (
+            <div className="space-y-2 px-4 pb-4 text-sm text-muted-foreground">
+              <p>
+                {usage.reason === 'missing-cli'
+                  ? t('minimax.usage.emptyMissingCli')
+                  : t('minimax.usage.emptyCliError')}
+              </p>
+              <p className="text-xs">{t('minimax.usage.emptyHint')}</p>
+            </div>
+          ) : usage?.available === true ? (
+            <div className="space-y-3 px-4 pb-4">
+              {usage.model_remains.map((entry) => {
+                const nameKey = `minimax.usage.perModel.${entry.model_name}`;
+                const modelName = t(nameKey, {
+                  defaultValue: entry.model_name.charAt(0).toUpperCase() + entry.model_name.slice(1),
+                });
+                const intervalPercent = entry.current_interval_remaining_percent;
+                const weeklyPercent = entry.current_weekly_remaining_percent;
+                return (
+                  <div
+                    key={entry.model_name}
+                    className="rounded-lg border border-border bg-card/50 p-3"
+                  >
+                    <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                      <div className="text-sm font-medium text-foreground">{modelName}</div>
+                      <span
+                        className={`rounded-md border px-2 py-0.5 text-xs ${statusPillClass(entry.current_interval_status)}`}
+                      >
+                        {statusLabelKey(entry.current_interval_status, t)}
+                      </span>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                        <span className="font-medium text-foreground/80">
+                          {t('minimax.usage.modelIntervalLabel')}
+                        </span>
+                        <span>
+                          {t('minimax.usage.resetsIn', {
+                            value: formatRemains(entry.remains_time),
+                          })}
+                        </span>
+                      </div>
+                      <ProgressBar
+                        percent={intervalPercent}
+                        ariaLabel={`${modelName} ${t('minimax.usage.modelIntervalLabel')}`}
+                      />
+                    </div>
+
+                    <div className="mt-2 space-y-1.5">
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                        <span className="font-medium text-foreground/80">
+                          {t('minimax.usage.modelWeeklyLabel')}
+                        </span>
+                        <span>
+                          {t('minimax.usage.resetsIn', {
+                            value: formatRemains(entry.weekly_remains_time),
+                          })}
+                        </span>
+                      </div>
+                      <ProgressBar
+                        percent={weeklyPercent}
+                        ariaLabel={`${modelName} ${t('minimax.usage.modelWeeklyLabel')}`}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
+        </SettingsCard>
+      </SettingsSection>
+
+      {error && (
+        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-200">
+          {error}
+        </div>
+      )}
     </div>
   );
 }

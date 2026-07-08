@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this project is
 
-CloudCLI (npm: `@cloudcli-ai/cloudcli`, formerly `claudecodeui`) is a web/desktop UI for Claude Code, Cursor CLI, Codex, Gemini CLI, and OpenCode. It is a Vite + React frontend served by an Express backend, packaged as an Electron desktop app, and shipped as a single npm binary (`cloudcli`).
+CloudCLI (npm: `@cloudcli-ai/cloudcli`, formerly `claudecodeui`) is a web/desktop UI for Claude Code, Cursor CLI, Codex, Gemini CLI, OpenCode, and (planned) Qwen Code. It is a Vite + React frontend served by an Express backend, packaged as an Electron desktop app, and shipped as a single npm binary (`cloudcli`).
 
 ## Common commands
 
@@ -250,7 +250,23 @@ Current modules:
 - `modules/websocket/` — owns the single `ws` server. The README in that folder documents the message envelope, the per-run `seq` event log, the PTY lifecycle for `/shell`, and the plugin WebSocket proxy.
 - `modules/notifications/` — web-push + notification preferences + notification orchestration.
 - `modules/browser-use/` — Browser-Use MCP integration; owns its own routes (`browser-use.routes.ts`, `browser-use-mcp.routes.ts`) and service. **Per-chat-run session lifecycle:** each chat run gets its own auto-created `BrowserUseSession` (one per run, reused across tool calls, closed when the run completes) correlated via a sidecar file at `~/.cloudcli/browser-use/current-chat-run.json` written by `modules/websocket/services/chat-run-registry.service.ts` on `startRun` and cleared on `completeRun`. The MCP stdio server at `server/browser-use-mcp.ts` reads the sidecar with a 1s TTL cache and injects `chatRunId` into every tool call so the HTTP bridge in `browser-use-mcp.routes.ts` can resolve or auto-create the right session. **Live WebSocket broadcast:** every session mutation is pushed to the UI via three extra `GatewayEventKind` values — `browser_use_session_created`, `browser_use_session_updated`, `browser_use_session_closed` (declared in `server/shared/types.ts`, consumed by `src/components/browser-use/view/BrowserUsePanel.tsx` via `useWebSocket().subscribe`). Backward-compatible: existing MCP tools that pass `sessionId` directly keep working; the auto-management is additive.
-- `modules/minimax/` — **MiniMax Token Plan MCP** (`web_search` + `understand_image` via the upstream `minimax-coding-plan-mcp` PyPI package). Unlike `browser-use`, MiniMax talks to its own public API directly — there is no HTTP bridge, only a single REST surface for `GET/PUT /api/minimax/{settings,status}`. The user registers the `MINIMAX_API_KEY` (plaintext, same trust level as `browser_use_mcp_token`) in `app_config` row `minimax_settings`; on toggle-on the service writes `cloudcli-minimax` to every provider's MCP config via `providerMcpService.addMcpServerToAllProviders`. Credentials UI lives in **Settings → API & tokens** (`MiniMaxCredentialsSection`) — the toggle + status pills live in **Settings → MiniMax** (`MiniMaxSettingsTab`), which links back to the credentials tab when the key is missing. Full architecture diagram in `docs/mcp/minimax.md`.
+- `modules/minimax/` — **MiniMax Token Plan MCP** (`web_search` + `understand_image` via the upstream `minimax-coding-plan-mcp` PyPI package). Unlike `browser-use`, MiniMax talks to its own public API directly — there is no HTTP bridge, only a REST surface. **Endpoints**: `GET /api/minimax/status`, `GET/PUT /api/minimax/settings`, `GET /api/minimax/usage?force=1`. The user registers the `MINIMAX_API_KEY` (plaintext, same trust level as `browser_use_mcp_token`) in `app_config` row `minimax_settings`; on toggle-on the service writes `cloudcli-minimax` to every provider's MCP config via `providerMcpService.addMcpServerToAllProviders`. Credentials UI lives in **Settings → API & tokens** (`MiniMaxCredentialsSection`) — the toggle + status pills + **Suscripción y uso** quota card live in **Settings → MiniMax** (`MiniMaxSettingsTab`), which links back to the credentials tab when the key is missing. The usage card shells `mmx quota show --output json --non-interactive` via an injectable runner seam (60s in-process cache, `?force=1` bypasses for the manual Refresh button). Full architecture diagram in `docs/mcp/minimax.md`.
+
+### Per-skill enable/disable ("soft toggle")
+
+`server/modules/providers/services/skill-state.service.ts` adds a per-provider soft-disable layer on top of the existing `SkillsProvider` facet:
+
+- **Storage**: `app_config` row `disabled_skills` = JSON `{ [provider]: { [sourcePath]: true } }`. Zero migration — apps with no row get `{}`.
+- **Stamping**: `SkillsProvider.stampDisabledState(skills)` reads the disabled set and stamps each `ProviderSkill` with `enabled: true | false` (the field is optional in `ProviderSkill`; missing = enabled).
+- **Provider overrides** that merge additional skills (Claude's plugin skills) should call `stampDisabledState` on the merged result — see `claude-skills.provider.ts` for the pattern.
+- **REST endpoints** under `/api/providers/:provider/skills/...`: `GET /disabled`, `PUT /state` (bulk), `PUT /:skillKey/state` (per-skill). All key by `sourcePath` (the absolute path on disk), not by `name` (which can collide across folders).
+- **Tests** at `server/modules/providers/tests/skill-state.test.ts` (6 tests, all pass) cover: read on empty, idempotent toggling, cross-provider isolation, stamp + filter, persistence across instances, and bulk disable/re-enable.
+
+**OpenCode is special**: `OpenCodeSkillsProvider` scans `~/.config/opencode/skills/`, `~/.claude/skills/`, and `~/.agents/skills/` — i.e. OpenCode reuses Claude's skill catalog at the filesystem level. So uploading a skill for Claude makes it appear in the OpenCode tab too (with a "Shared with Claude" label in the install path UI). Conversely, **skills installed directly for OpenCode need at least one of those dirs to exist** — if they're all empty/missing, the Skills tab shows the "No skills discovered yet" empty state instead of being broken. See `docs/providers/opencode.md` for the full file inventory and `docs/providers/agente.md` for the per-provider capability matrix.
+
+### OpenCode permission model — agent + flag, not permissionMode
+
+OpenCode's permission system is **structurally different** from Claude/Codex/Cursor/Gemini. It does **not** consume a `permissionMode` string at spawn — instead the user picks a primary agent (`build` / `plan`) and toggles the `--auto` flag. The granular per-tool rules live in `~/.config/opencode/agent/<name>.md`. The CloudCLI side models this as `OpencodePermissionsState = { agent: 'build' | 'plan', autoApprove: boolean }` (persisted in `localStorage['opencode-settings']`) and exposes it via a dedicated `OpencodePermissions` component (`src/components/settings/view/tabs/agents-settings/sections/content/PermissionsContent.tsx`). The wiring is in `AgentCategoryContentSection.tsx` (add the opencode branch under `selectedCategory === 'permissions'`) and `useSettingsController.ts` (state + localStorage round-trip). **Not yet wired to the spawn** — today the values are persisted and shown in the UI but the gateway still passes `permissionMode: 'default'` regardless. Closing that loop requires changes in `server/modules/websocket/services/chat-websocket.service.ts` and `provider-capabilities.service.ts`.
 
 ### Frontend layout (`src/`)
 
@@ -296,6 +312,50 @@ View-specific namespaces living under `settings.json` (both en + es):
 - `settings.onboarding` — first-run wizard: git step (`git.title`, `git.nameLabel`, `git.errors.*`), agents step (`agents.title`, `agents.providerTitles.<provider>`, `agents.status.*`, `agents.loginButton`), step progress (`steps.git`, `steps.agents`, `steps.required`), wizard buttons (`buttons.previous`, `buttons.next`, `buttons.saving`, `buttons.completing`, `buttons.completeSetup`, `buttons.completeFailed`).
 
 For **curated plugins** (those listed as recommendations in `src/components/plugins/view/PluginSettingsTab.tsx#OFFICIAL_PLUGIN_RECOMMENDATIONS` and `#UNOFFICIAL_PLUGIN_RECOMMENDATIONS`), the installed `PluginCard` prefers the translated name/description from `pluginSettings.<translationKey>.name` / `.description` over the raw `plugin.displayName` / `plugin.description` from the plugin's own `manifest.json` (e.g. the project-stats plugin shows "Estadísticas del proyecto" even though its manifest is English-only). Third-party plugins without a matching recommendation still show their hardcoded manifest values.
+
+### i18n gotcha — namespace-relative paths in `t(...)`
+
+When you bind the hook to a namespace (`const { t } = useTranslation('settings')`), the `t()` calls take **namespace-relative** paths. The wrong form renders the literal key string in the UI (e.g. `settings.minimax.usage.sectionTitle` appears verbatim):
+
+```tsx
+// ❌ WRONG — duplicates the namespace prefix, i18next looks for
+//    settings.settings.minimax.usage.X and falls back to the key literal.
+const { t } = useTranslation('settings');
+t('settings.minimax.usage.sectionTitle');
+
+// ✅ RIGHT — path is relative to the bound namespace.
+const { t } = useTranslation('settings');
+t('minimax.usage.sectionTitle');
+```
+
+How to audit: `grep -n "t('settings\." src/components/` — any hit in a component that uses `useTranslation('settings')` is a bug. Components that use the default namespace (no argument to `useTranslation`) can use either absolute paths (`settings.foo.bar`) or relative ones (`foo.bar`) interchangeably. The pattern was just broken when we wired `MiniMaxSettingsTab.tsx` to the namespace explicitly; a `sed -i "s/t('settings\\.minimax\\./t('minimax./g"` on the file fixed all 21 sites at once. The same convention applies to `useTranslation('chat')`, `useTranslation('common')`, etc.
+
+### i18n across 11 locales — full-translation + verbatim English fallback
+
+The repo ships 11 locale files under `src/i18n/locales/<locale>/`: `en`, `es`, `de`, `fr`, `it`, `ja`, `ko`, `ru`, `tr`, `zh-CN`, `zh-TW`. Convention:
+
+- **`en` and `es`** — full native translation. Spanish is the default UI language (`getSavedLanguage` returns `'es'` with `fallbackLng: 'en'`).
+- **Other 9 locales** — for new key blocks, paste the English verbatim into each file as a placeholder. The `fallbackLng: 'en'` setting means even if the key is missing the user sees English, but pasting the verbatim copy makes future translation a search-and-replace instead of a structural change. Don't bother translating to all 11 in one PR — translator passes can pick them up later.
+
+Use a small Python script (run from `/opt/cloud-cli2026`) to insert a block into all 9 fallback locales at once. The pattern that worked for the `minimax.usage.*` and `permissions.opencode.*` blocks:
+
+```python
+import json
+LOCALES = ["de","fr","it","ja","ko","ru","tr","zh-CN","zh-TW"]
+BLOCK = '''    "myNewKey": {
+      "title": "My title",
+      ...
+    },
+'''
+for loc in LOCALES:
+    path = f"src/i18n/locales/{loc}/settings.json"
+    data = json.load(open(path))
+    parent = data["settings"]  # or wherever the new block goes
+    parent["myNewKey"] = {"title": "My title", ...}
+    open(path, "w").write(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+```
+
+Validate with `for loc in en es de fr it ja ko ru tr zh-CN zh-TW; do python3 -c "import json; json.load(open('src/i18n/locales/$loc/settings.json'))"; done` after the script runs — `json.dumps` will silently produce invalid JSON if your block has a trailing comma or quote mismatch.
 
 ### Security defaults
 
@@ -376,9 +436,32 @@ To add a new managed MCP: copy a sibling (`browser-use` is the most complete exa
 
 El patrón completo de ocho pasos aplica cuando CloudCLI actúa de proxy entre el agente y un servicio externo (`browser-use` es el ejemplo canónico). **Pero** hay managed MCPs donde el upstream package habla directo con su propia API pública — en ese caso se omiten los pasos 2, 3, y 5 (stdio wrapper, sidecar, CLI subcommand):
 
-- `server/modules/minimax/` — `cloudcli-minimax` envuelve el PyPI `minimax-coding-plan-mcp` que expone `web_search` y `understand_image`. El package habla directo con `https://api.minimax.io` usando la `MINIMAX_API_KEY` que el usuario pega. No hay bridge HTTP, no hay sidecar de chat-run, no hay CLI subcommand — solo `minimax.service.ts` + `minimax.routes.ts` + la lógica de registrar/quitar el MCP en los providers vía `providerMcpService`.
+- `server/modules/minimax/` — `cloudcli-minimax` envuelve el PyPI `minimax-coding-plan-mcp` que expone `web_search` y `understand_image`. El package habla directo con `https://api.minimax.io` usando la `MINIMAX_API_KEY` que el usuario pega. No hay bridge HTTP, no hay sidecar de chat-run, no hay CLI subcommand — solo `minimax.service.ts` + `minimax.routes.ts` + la lógica de registrar/quitar el MCP en los providers vía `providerMcpService`. El tab **Suscripción y uso** de la UI usa `mmx quota show --output json --non-interactive` (cliente CLI standalone, no el MCP wrapper) — por eso el spawn va por `spawnSync('which', ['mmx'])` + `spawnSync('mmx', ['quota', 'show', '--output', 'json', '--non-interactive'])` con `runner` inyectable para tests y caché de 60s en proceso. Ver `docs/mcp/minimax.md` § "Quota".
 
 Si en el futuro agregás un MCP similar (package upstream ya habla HTTP por su cuenta), seguí el patrón de `minimax/` en vez del de `browser-use/`. La regla mental: **¿CloudCLI necesita intermediar entre el agente y el servicio upstream?** Sí → patrón `browser-use` (completo). No → patrón `minimax` (mínimo).
+
+### Tests para módulos managed MCP
+
+Cada módulo managed (browser-use, minimax, próximos) tiene un test suite colocalizado en `server/modules/<name>/tests/<name>.service.test.ts`. Patrón obligatorio:
+
+1. **`clear<Thing>()` + `set<Thing>(partial)`** en cada test que toque el `app_config` row del módulo — el patrón `clearSettings()` en `minimax.service.test.ts:20` es la referencia. Sin cleanup transactional, depende de `try { ... } finally { clear<Thing>() }`.
+2. **Para spawners externos** (como el `mmx` shell de MiniMax), exponer `__setUsageRunnerForTests(fn)` y `__clearUsageCacheForTests()` como exports nombrados con prefijo `__`. El runner inyectable evita monkey-patching `node:child_process` que `t.mock.module` no soporta para built-ins.
+3. **`spawnSync` directo sin stub** es aceptable solo cuando el binario está garantizado en el environment de CI (como `uvx` en `getStatus` — el test asume que está en PATH y deja que `probeUvx` retorne `true`). Para caminos donde el binary podría no estar, **siempre** usar el runner inyectable.
+
+Si tu nuevo módulo tiene una dependencia externa binaria, seguí este patrón desde el día uno — refactorizar después es más caro.
+
+## Per-provider docs — `docs/providers/*.md` + the testing-status column
+
+Each provider has its own doc under `docs/providers/`: `claude.md`, `codex.md`, `cursor.md`, `gemini.md`, `opencode.md`, `qwen.md` (Qwen is currently a planning doc — Phases 1–8 of the integration are still pending in TaskList #87–#96). `docs/providers/agente.md` is the index: it has the **Provider catalog** (5-row table linking to each per-provider doc) and the **Capabilities matrix** (auth command, permission modes, `supportsPermissionRequests`, interactive UI, `tool_use` renderer, custom providers, status).
+
+When you change any of the per-provider docs, **update `agente.md` in the same commit** so the index stays consistent. The Capabilities matrix is the single source of truth for "what does each provider support and how does the UI render it" — update it whenever a capability flag flips, a new permission mode lands, or a tool renderer is added.
+
+The matrix has two status columns that are deliberately separate:
+
+- **Engineering status** — Production / Phase-0 ready / etc. Means the code path is shipped.
+- **User testing status** — ✅ Tested by user / ⚠️ Not tested by user (in development) / 🛠 In planning. Means **you personally** have run real sessions against this provider. Other users may have a different mix.
+
+This split was added because "Production" engineering status does NOT mean you validated it on your own machine. Update the testing-status column whenever your own usage of a provider changes — it's a personal reality check, not a project-wide signal. Legend block in `docs/providers/agente.md:23-36`.
 
 ## Task queue (external plugin only)
 

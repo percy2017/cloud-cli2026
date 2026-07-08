@@ -38,4 +38,19 @@ router.put('/settings', async (req, res) => {
   }
 });
 
+// Quota snapshot from the `mmx` CLI. Pass `?force=1` to bypass the in-process
+// 60s cache (used by the manual Refresh button in the UI).
+router.get('/usage', async (req, res) => {
+  try {
+    const force = req.query.force === '1';
+    const data = await minimaxService.getUsage({ force });
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to load MiniMax usage.',
+    });
+  }
+});
+
 export default router;

@@ -1159,6 +1159,15 @@ Logs worth grepping:
   mutates `sdkOptions.allowedTools` in place (this state lives in the SDK options object
   for the current run only — settings persist across runs only if the user re-grants them).
 
+## Memory file convention
+
+Claude Code's `/memory` builtin opens the project's `CLAUDE.md` for editing.
+
+- **Filename**: `CLAUDE.md` (literal, project root).
+- **Auto-loaded by the SDK**: `settingSources: ['project', 'user', 'local']` reads three conventional locations — `<project>/CLAUDE.md`, `~/.claude/CLAUDE.md`, and `<project>/.claude/CLAUDE.md` (local).
+- **UI surface**: Listed in the Command Palette under "Built-in commands" as `/memory` with the chip `builtin`. CloudCLI lists it as-is from the provider; it does not intercept the command.
+- **Symbiosis with skills**: Skills (under `~/.claude/skills/<name>/SKILL.md`) are reusable prompt bodies; `CLAUDE.md` is the persistent project-wide memory. They are separate surfaces — see `server/modules/providers/README.md` for the skill-discovery flow.
+
 ## See also
 
 - `server/modules/providers/README.md` — canonical provider-facet guide.
