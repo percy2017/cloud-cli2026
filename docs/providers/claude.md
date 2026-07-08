@@ -1164,5 +1164,199 @@ Logs worth grepping:
 - `server/modules/providers/README.md` — canonical provider-facet guide.
 - `server/modules/websocket/README.md` — message envelope and per-run event log.
 - `CLAUDE.md` — top-level project conventions and the CloudCLI runtime model.
-- `docs/providers/README.md` — index of provider documentation.
+- [`docs/providers/agente.md`](./agente.md) — index of provider documentation + the
+  cross-provider capabilities & UI support matrix.
 - `docs/providers/opencode.md` — sibling in-process-vs-subprocess comparison.
+
+## Interactive prompts UI — what the user sees when Claude asks
+
+Claude is the **only** provider with a real-time interactive UI for the user's
+interaction with the LLM mid-stream. This section zooms in on the UI surface and
+the WebSocket contract that powers it.
+
+### Two flows, one distinction
+
+CloudCLI renders two visually distinct things in the chat composer:
+
+| Flow | WebSocket kind | Triggered by | UI | Providers |
+|---|---|---|---|---|
+| **A. Tool result** | `kind: 'tool_use'` with `toolResult` | The LLM *executed* a tool | Card with command + output, diff, list, etc. | All |
+| **B. Permission request** | `kind: 'permission_request'` | The LLM *wants to* execute a dangerous tool | Modal/tarjeta interactiva with Allow/Deny | **Claude only** |
+
+The interactive permission flow exists only for Claude because the Anthropic SDK
+hands control back to CloudCLI before each tool runs via the `canUseTool` callback.
+The other five providers are fire-and-forget subprocesses; their CLIs handle
+permission decisions internally (via CLI flags at spawn time, never mid-stream).
+
+### The `canUseTool` interceptor
+
+The SDK calls `canUseTool(toolName, input, context)` from
+`server/claude-sdk.js:581` *before* every tool use. CloudCLI wraps this callback to:
+
+1. Generate a `requestId` (UUID).
+2. Emit a `permission_request` frame over WebSocket:
+   ```ts
+   ws.send(createNormalizedMessage({
+     kind: 'permission_request',
+     requestId,
+     toolName,        // 'AskUserQuestion' | 'ExitPlanMode' | 'Bash' | 'Edit' | ...
+     input,
+     sessionId,
+     provider: 'claude'
+   }));
+   ```
+3. Emit a `notification_event` with `kind: 'action_required'`, `code: 'permission.required'`
+   so the chat sidebar badge updates.
+4. Return a promise resolved by the user's decision (or rejected after `timeoutMs`).
+
+**Timeouts** (`server/claude-sdk.js:40`):
+
+- Interactive tools (`AskUserQuestion`, `ExitPlanMode`):
+  `TOOLS_REQUIRING_INTERACTION.has(toolName) → timeoutMs: 0` (waits indefinitely).
+- Default for everything else: `TOOL_APPROVAL_TIMEOUT_MS = parseInt(process.env.CLAUDE_TOOL_APPROVAL_TIMEOUT_MS, 10) || 55000` (55 s).
+
+### `permission_request` → UI dispatch
+
+`useChatRealtimeHandlers.ts:271` matches the case `kind === 'permission_request'`
+and pushes the request into `pendingPermissionRequests[]` in the session store.
+
+`ChatComposer.tsx:212` mounts `<PermissionRequestsBanner />` whenever the list is
+non-empty. The banner's render path (`PermissionRequestsBanner.tsx:45-53`) is:
+
+```
+for each pendingRequest:
+  CustomPanel = getPermissionPanel(request.toolName)   ← permissionPanelRegistry lookup
+  if CustomPanel:
+    <CustomPanel request={…} onDecision={handlePermissionDecision} />
+  else:
+    <Confirmation approval="pending">
+      <ConfirmationTitle>Permission required</ConfirmationTitle>
+      <ConfirmationRequest>
+        <code>{toolName}</code>
+        <details>{formatToolInputForDisplay(input)}</details>
+      </ConfirmationRequest>
+      <ConfirmationActions>
+        <ConfirmationAction variant="deny"  onClick={…}>Deny</ConfirmationAction>
+        <ConfirmationAction variant="allow+remember" onClick={…}>Allow &amp; remember</ConfirmationAction>
+        <ConfirmationAction variant="allow"  onClick={…}>Allow once</ConfirmationAction>
+      </ConfirmationActions>
+    </Confirmation>
+```
+
+The default `<Confirmation>` is rendered for every tool except `AskUserQuestion`.
+The latter is special-cased in `PermissionRequestsBanner.tsx:17`:
+
+```ts
+registerPermissionPanel('AskUserQuestion', AskUserQuestionPanel);
+```
+
+### `AskUserQuestionPanel` — the blue card
+
+The richest UI surface in the whole feature. Located at
+`src/components/chat/tools/components/InteractiveRenderers/AskUserQuestionPanel.tsx`
+(385 lines). Not a native `<dialog>` — it's an **embedded card** in the chat
+stream with slide-up animation (`translate-y-3 → translate-y-0`, `opacity-0 →
+opacity-100`, 500ms).
+
+Visual breakdown:
+
+- **Top border**: 2-px gradient blue → cyan → teal (`from-blue-500 via-cyan-400 to-teal-400`).
+- **Header**:
+  - SVG question-mark icon in a square with blue/cyan gradient + pulsing cyan dot (`animate-pulse`).
+  - Static label `"Claude needs your input"`.
+  - Optional badge from `q.header`.
+  - Step counter `1/3` when multiple questions; clickable progress dots.
+  - Question text (`text-[14px] font-medium`).
+  - `"Select all that apply"` when `q.multiSelect === true`.
+- **Options list** (scrollable, `max-h-48 overflow-y-auto`):
+  - Each option is a `<button>` with:
+    - **Kbd hint** numeric (1–9) in a small box that turns blue when selected.
+    - Label (`text-[13px]`) and optional `opt.description` (`text-[11px] text-gray-400`).
+    - Blue ✓ when selected.
+  - **"Other…"** at the end (key `0`, dashed-border style); activates an inline
+    `<input type="text">` with placeholder `"Type your answer…"`.
+- **Footer**: `Skip` (Esc), `Back` (chevron, multi-question only), `Next`/`Submit` (Enter).
+
+**Keyboard shortcuts** (active globally while the panel is mounted):
+
+| Key | Action |
+|---|---|
+| `1`–`9` | Toggle option N |
+| `0` | Toggle "Other" |
+| `Enter` | Next / Submit |
+| `Esc` | Skip |
+
+**Submit** (lines 83-85):
+
+```ts
+onDecision(requestId, {
+  allow: true,
+  updatedInput: { ...input, answers: { [question]: selected.join(', ') } }
+});
+```
+
+The `answers` map is propagated back into the SDK's `tool_use` block so the model
+"sees" the user's response on the next iteration.
+
+### `PlanDisplay` — exit-plan-mode cards
+
+`<PlanDisplay />` lives in `src/components/chat/tools/components/PlanDisplay.tsx`
+and is rendered **inline** (not via the banner) for `toolName === 'ExitPlanMode'`
+or `'exit_plan_mode'`. The banner filters these out at
+`PermissionRequestsBanner.tsx:35` and `useChatRealtimeHandlers.ts:13` routes them
+to the `plan` branch instead. Renders the proposed plan as markdown with
+approve/deny actions.
+
+### Reconnect mid-stream
+
+`server/claude-sdk.js:188-193` documents the replay path: when a WebSocket
+reconnects mid-run, `getPendingApprovalsForSession(sessionId)` returns the
+in-flight `permission_request`s so the UI can re-show them. This means you can
+close the tab and reopen it without losing the prompt for the user.
+
+### Known limitation: `auto` / `bypassPermissions` skips interactive tools
+
+`server/claude-sdk.js` documents this explicitly. When `permissionMode` is
+`bypassPermissions` or `auto`, the SDK auto-approves every tool call (except
+explicit deny rules) **before** the `canUseTool` callback fires. Interactive
+tools (`AskUserQuestion`, `ExitPlanMode`) are silently bypassed — the LLM gets
+no answer, runs as if the user skipped.
+
+The fix is to use a `PreToolUse` hook instead of `canUseTool`, or to keep
+`permissionMode` in `default` / `acceptEdits` and rely on the UI's Allow/Deny.
+
+### Permission response WebSocket contract
+
+```ts
+// Server → Client
+{ kind: 'permission_request', requestId, toolName, input, sessionId, provider: 'claude' }
+
+// Client → Server
+{
+  type: 'chat.permission-response',
+  requestId,
+  allow: boolean,
+  updatedInput?: unknown,
+  message?: string,
+  rememberEntry?: string | null
+}
+```
+
+The `rememberEntry` (when `truthy` and `allow: true`) is persisted via
+`useChatComposerState.handlePermissionDecision:975-998` into the per-session
+allowed-tools list so subsequent runs of the same tool don't re-prompt.
+
+## Capabilities & UI support (Claude row of the cross-provider matrix)
+
+| Property | Claude value | Source |
+|---|---|---|
+| Login command | `claude login` | `ProviderLoginModal.tsx:36-38` |
+| Permission modes | `default` \| `acceptEdits` \| `bypassPermissions` \| `plan` | `useChatProviderState.ts:12-18` |
+| `supportsPermissionRequests` | **`true`** | `provider-capabilities.service.ts:39` |
+| Interactive UI | **Yes** — `AskUserQuestionPanel` + `<Confirmation>` default + `PlanDisplay` | `PermissionRequestsBanner.tsx:17, 45-53` |
+| `tool_use` renderer | Rich (`QuestionAnswerContent`, `ToolDiffViewer`, `BashCommandDisplay`, `SubagentContainer`, …) | `src/components/chat/tools/configs/toolConfigs.ts` |
+| Custom providers | No (Anthropic API key only) | `claude-auth.provider.ts` |
+| Status | Production | — |
+
+See [`docs/providers/agente.md`](./agente.md) for the full cross-provider comparison
+table and the auth resolution matrix.

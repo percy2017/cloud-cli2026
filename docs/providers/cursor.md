@@ -826,11 +826,54 @@ Logs worth grepping:
 - **`CursorDbBlob`, `CursorJsonBlob`, `CursorMessageBlob`** types live in `cursor-sessions.provider.ts:17-32`. If Cursor changes its on-disk format (which it has done historically), this file is the only one that needs to change.
 - **No dedicated `cursor-cli.test.js`** — be careful when modifying `server/cursor-cli.js` because the runtime has no test coverage. Read the cursor-cli.js:37-40 comment that documents the one-terminal-complete contract before changing it.
 
+## Interactive prompts UI
+
+Cursor has **`supportsPermissionRequests: false`** in
+`server/modules/providers/services/provider-capabilities.service.ts:57`. Two
+concrete consequences:
+
+1. **The Cursor CLI does not surface interactive prompts** to CloudCLI's
+   `permission_request` flow. All permission decisions go through the `-f` flag
+   at runtime (set in `CursorPermissions` → `skipPermissions: true` →
+   `args.push('-f')` in `server/cursor-cli.js`).
+2. **`<PermissionRequestsBanner />` never appears** in the chat composer for
+   cursor sessions because `pendingPermissionRequests` stays empty.
+
+The chat composer still shows `<CursorPermissions />` (in
+`src/components/settings/view/tabs/agents-settings/sections/content/PermissionsContent.tsx`),
+which lets the user pick between the three modes (`skipPermissions`,
+`allowedCommands`, `disallowedCommands`). The choice is forwarded to the
+spawn command as `--allow-command` / `--deny-command` flags; the CLI then handles
+any "approve this?" prompts internally, completely outside the WebSocket envelope.
+
+If the Cursor CLI internally asks the user something via its own TUI (in
+`ProviderLoginModal`), that interaction happens in the embedded terminal —
+not in the chat stream.
+
+See [`docs/providers/claude.md#interactive-prompts-ui`](./claude.md#interactive-prompts-ui)
+for the full Claude interactive flow, and [`docs/providers/agente.md`](./agente.md)
+for the cross-provider comparison matrix.
+
+## Capabilities & UI support (Cursor row)
+
+| Property | Cursor value | Source |
+|---|---|---|
+| Login command | `cursor auth login` | `ProviderLoginModal.tsx:39-41` |
+| Permission modes | `default` \| `acceptEdits` \| `bypassPermissions` (mapped to `-f` / `--allow-command` / `--deny-command`) | `PermissionsContent.tsx`, `server/cursor-cli.js` |
+| `supportsPermissionRequests` | `false` | `provider-capabilities.service.ts:57` |
+| Interactive UI | **No** — CLI does not surface interactive prompts; all decisions via `-f` flag | `cursor.md:693-709` |
+| `tool_use` renderer | Rich (`BashCommandDisplay`, `ToolDiffViewer`, `FileListContent`, etc.) | `toolConfigs.ts` (same as Claude) |
+| Custom providers | No | `cursor-auth.provider.ts` |
+| Status | Production | — |
+
+See [`docs/providers/agente.md`](./agente.md) for the full cross-provider comparison
+table and the auth resolution matrix.
+
 ## See also
 
 - `server/modules/providers/README.md` — canonical provider-facet guide.
 - `server/modules/websocket/README.md` — message envelope and per-run event log.
 - `CLAUDE.md` — top-level project conventions and the CloudCLI runtime model.
-- `docs/providers/README.md` — index of provider documentation.
+- `docs/providers/README.md` — index of provider documentation (renamed to `agente.md`; this link may break — see `docs/providers/agente.md`).
 - `docs/providers/opencode.md` — sibling subprocess+JSONL comparison (opencode shells out with `--format json`, cursor with `--output-format stream-json`; different session storage patterns — opencode is a shared DB, cursor is per-session SQLite blob DAG).
 - `docs/providers/claude.md` — sibling with the most thorough UI integration documentation. The cursor UI integration section is structured as deltas-vs-claude.

@@ -931,12 +931,176 @@ Logs worth grepping:
   enumeration. If your Codex CLI exposes newer models, refresh the cache by running
   `codex models` so `models_cache.json` is regenerated.
 
+## Auth resolution — 3-source cascade
+
+`server/modules/providers/list/codex/codex-auth.provider.ts#checkCredentials` resolves
+Codex credentials in strict priority order. The check only emits the literal
+`'Codex not configured'` when **all three sources are empty or missing**.
+
+### Priority order
+
+| # | Source | `method` returned | When recognized |
+|---|---|---|---|
+| 1 | `~/.codex/auth.json` | `'credentials_file'` (OAuth) or `'api_key'` (top-level `OPENAI_API_KEY`) | `tokens.id_token` *or* `tokens.access_token` *or* top-level `OPENAI_API_KEY` |
+| 2 | `~/.codex/config.toml` | `'config_toml'` | top-level `OPENAI_API_KEY`, OR top-level `experimental_bearer_token`, OR `[providers.*].apiKey`/`OPENAI_API_KEY`, OR **`[model_providers.*].experimental_bearer_token`**, OR `[model_providers.*].api_key`/`OPENAI_API_KEY` |
+| 3 | `process.env.OPENAI_API_KEY` (or `OPENAI_KEY` / `CODEX_API_KEY`) | `'env_var'` | any of the three env vars is non-empty |
+
+If none of the above resolve, the helper returns `{ authenticated: false, email: null, method: null, error: 'Codex not configured' }` and the UI shows the
+red banner `Error: Codex not configured`.
+
+### Why this matters — the `[model_providers.*]` block
+
+Codex CLI does **not** use the schema `[providers.*]` for the user-facing endpoint
+configuration. The actual schema for a custom model provider is `[model_providers.<name>]`
+with an `experimental_bearer_token` field. A user that has only:
+
+```toml
+model_provider = "minimax"
+
+[model_providers.minimax]
+name = "MiniMax"
+base_url = "https://api.minimax.io/v1"
+experimental_bearer_token = "sk-cp-…"
+wire_api = "responses"
+```
+
+…in their `~/.codex/config.toml` and **no `auth.json`** is fully authenticated from the
+Codex CLI's perspective — but the old CloudCLI auth probe emitted `'Codex not configured'`
+because it only checked `auth.json`. The fix in
+`codex-auth.provider.ts:123-152` parses the TOML with `@iarna/toml` (already a
+dependency for the codex MCP facet) and walks both `[providers.*]` and
+`[model_providers.*]` blocks for any credential-shaped key. A helper
+`hasCredentialKey()` at module bottom centralises the list of recognised field
+names: `OPENAI_API_KEY`, `openai_api_key`, `apiKey`, `api_key`,
+`experimental_bearer_token`.
+
+### Tests
+
+`server/modules/providers/tests/codex-auth.test.ts` (10 cases, all colocated):
+`auth.json` with `id_token` → `'credentials_file'`; `auth.json` with `OPENAI_API_KEY` →
+`'api_key'`; only `config.toml` with `OPENAI_API_KEY` → `'config_toml'`;
+`[providers.*]` with `apiKey` → `'config_toml'`; `[model_providers.*]` with
+`experimental_bearer_token` → `'config_toml'`; top-level `experimental_bearer_token`
+→ `'config_toml'`; only `process.env.OPENAI_API_KEY` → `'env_var'`; nothing
+present → `'Codex not configured'`; empty `auth.json {}` with `config.toml` →
+falls through to `config_toml`; `config.toml` without any credential field →
+emits `'Codex not configured'`.
+
+Run from `server/`:
+
+```
+npx tsx --test modules/providers/tests/codex-auth.test.ts
+```
+
+## SDK spawn bug — `Codex Exec exited with code 1: Reading prompt from stdin...`
+
+When invoking Codex via CloudCLI the first time, the chat driver can fail with:
+
+```
+[Codex] Error: Error: Codex Exec exited with code 1: Reading prompt from stdin...
+    at CodexExec.run (.../@openai/codex-sdk/src/exec.ts:232:15)
+    at Thread.runStreamedInternal (.../@openai/codex-sdk/src/thread.ts:97:24)
+    at async queryCodex (server/openai-codex.js:293:22)
+```
+
+### What it means
+
+`@openai/codex-sdk` wraps the `codex` CLI as a subprocess and **streams the prompt
+to its stdin** instead of passing it as a positional argument. When the CLI does not
+recognise the model name (or when `model_provider` cannot be resolved), it enters a
+mode where it complains `"Reading prompt from stdin..."` and exits with code 1
+because the SDK's `CodexExec.run()` was waiting for the prompt but didn't write it.
+
+This is *especially* common when the user's `~/.codex/config.toml` declares a
+**custom model provider** (like `[model_providers.minimax]` above). The SDK passes
+`--model <userModel>` to the CLI, the CLI tries to resolve it against the
+`model_provider = "minimax"` block, and if `experimental_bearer_token` is missing
+or invalid the CLI bails before reading the prompt from stdin.
+
+### Why direct CLI calls work
+
+Invoking the CLI directly with the same args succeeds because the prompt is passed
+as a positional argument, which is what the CLI expects in the fallback mode:
+
+```bash
+codex exec --model MiniMax-M3 --skip-git-repo-check --sandbox workspace-write "echo hello"
+# → "Hello! How can I help you today?"
+```
+
+…with one warning:
+
+```
+warning: Model metadata for `MiniMax-M3` not found. Defaulting to fallback metadata;
+this can degrade performance and cause issues.
+```
+
+So the CLI is **functioning** (it ran the prompt and got an answer), but the SDK
+wrapper chokes on the model's metadata warning because it correlates it with
+"stdin wasn't read" and bails.
+
+### Workarounds
+
+Until the SDK upstream fixes the race, three workarounds:
+
+1. **Use a known model name** — change the model picker in the chat composer to a
+   model whose metadata the SDK knows (e.g. `gpt-5.5`). This avoids the metadata
+   warning entirely.
+2. **Pass the prompt via stdin manually** (advanced) — open the embedded terminal,
+   run `codex exec --model <m>`, type the prompt, hit Enter twice.
+3. **Wait for SDK fix** — track `https://github.com/openai/codex/issues` for a
+   resolution that handles the "model metadata missing" warning without exiting.
+
+The runtime emits the error via `ws.send({ kind: 'error', content: stderrText })`
+at `server/openai-codex.js:237-243` so the UI shows it as a red error card in the
+stream.
+
+## Interactive prompts UI
+
+Codex has **`supportsPermissionRequests: false`** in
+`server/modules/providers/services/provider-capabilities.service.ts:48`. This means:
+
+- The CLI does not surface interactive prompts to CloudCLI's `permission_request`
+  flow. All permission decisions go through the `--sandbox` and `--approval-policy`
+  flags at spawn time (`openai-codex.js:197-216`):
+  - `permissionMode: 'acceptEdits'` → `sandboxMode: 'workspace-write'`, `approvalPolicy: 'never'`
+  - `permissionMode: 'bypassPermissions'` → `sandboxMode: 'danger-full-access'`, `approvalPolicy: 'never'`
+  - `permissionMode: 'default'` → `sandboxMode: 'workspace-write'`, `approvalPolicy: 'untrusted'`
+- `<PermissionRequestsBanner />` never appears in the chat composer for codex sessions
+  because `pendingPermissionRequests` stays empty.
+- `AskUserQuestionPanel` is **not** rendered. If the Codex CLI internally asks the
+  user something via its own TUI, that interaction happens outside CloudCLI (in the
+  embedded terminal if the user is running `codex login` from there).
+
+The Codex chat composer still shows the `<CodexPermissions />` component
+(`PermissionsContent.tsx`) which lets the user pick between the three modes. The
+choice is forwarded to the SDK as spawn flags — the CLI then handles any
+"approve this?" prompts internally, completely outside the WebSocket envelope.
+
+See [`docs/providers/claude.md#interactive-prompts-ui`](./claude.md#interactive-prompts-ui)
+for the full Claude interactive flow, and [`docs/providers/agente.md`](./agente.md)
+for the cross-provider comparison matrix.
+
+## Capabilities & UI support (Codex row)
+
+| Property | Codex value | Source |
+|---|---|---|
+| Login command | `codex login` (or `codex login --device-auth` on SaaS) | `ProviderLoginModal.tsx:36-38` |
+| Permission modes | `default` \| `acceptEdits` \| `bypassPermissions` | `useChatProviderState.ts` |
+| `supportsPermissionRequests` | `false` | `provider-capabilities.service.ts:48` |
+| Interactive UI | **No** — capability off; CLI handles decisions via `--approval-policy` | `openai-codex.js:197-216` |
+| `tool_use` renderer | Rich (`BashCommandDisplay`, `ToolDiffViewer`, `FileListContent`, etc.) | `toolConfigs.ts` (same as Claude) |
+| Custom providers | **Yes** — `[model_providers.*]` with `experimental_bearer_token` | `codex-auth.provider.ts:123-152` |
+| Status | Production | — |
+
+See [`docs/providers/agente.md`](./agente.md) for the full cross-provider comparison
+table and the auth resolution matrix.
+
 ## See also
 
 - `server/modules/providers/README.md` — canonical provider-facet guide.
 - `server/modules/websocket/README.md` — message envelope and per-run event log.
 - `CLAUDE.md` — top-level project conventions and the CloudCLI runtime model.
-- `docs/providers/README.md` — index of provider documentation.
+- `docs/providers/README.md` — index of provider documentation (renamed to `agente.md`; this link may break — see `docs/providers/agente.md`).
 - `docs/providers/opencode.md` — sibling subprocess+JSONL comparison (opencode shells out, codex
   uses the SDK; both have shared session storage strategies).
 - `docs/providers/gemini.md` — sibling subprocess+NDJSON comparison (gemini is also a shell-out

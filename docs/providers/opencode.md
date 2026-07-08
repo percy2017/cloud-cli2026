@@ -490,9 +490,107 @@ Logs worth grepping:
   run started in someone else's terminal. The session synchronizer exists exactly to handle
   this case.
 
+## Interactive prompts UI — the `question` tool gap
+
+OpenCode has **`supportsPermissionRequests: false`** in
+`server/modules/providers/services/provider-capabilities.service.ts:75`. This means:
+
+1. The CLI never emits a `permission_request` frame over WebSocket. All
+   permission decisions go through OpenCode's own permission UI (outside CloudCLI).
+2. `<PermissionRequestsBanner />` never appears in the chat composer for opencode
+   sessions.
+3. `AskUserQuestionPanel` is **never** rendered.
+
+### The native `question` tool
+
+OpenCode's CLI ships a native tool called `question` (documented at
+`https://opencode.ai/docs/tools`) that lets the LLM ask the user a structured
+question mid-stream. Parameters: `header`, `question` (text), list of `options`.
+
+When the LLM uses this tool, the CLI emits a JSONL event identical in shape to
+any other tool:
+
+```jsonl
+{ "type": "tool_use", "tool": "question", "input": { "questions": [...] }, "callID": "..." }
+```
+
+The OpenCode normalizer at
+`server/modules/providers/list/opencode/opencode-sessions.provider.ts:273-295`
+does not inspect the tool name — it just propagates `toolName = raw.tool`. So
+the WebSocket frame arrives at the frontend with `kind: 'tool_use', toolName: 'question'`.
+
+### Why the UI card looks different from Claude's
+
+Two mismatches between OpenCode's tool name and the frontend's renderer registry:
+
+1. **`getToolCategory('question')` returns `'default'`** —
+   `src/components/chat/tools/ToolRenderer.tsx:45` only recognises
+   `AskUserQuestion` (Claude's name) as the `question` category. The bare
+   `question` name (OpenCode's) falls through to `'default'`, so the card
+   border is **gris** (`border-l-border`) instead of **azul**.
+
+2. **`TOOL_CONFIGS` has no entry for `'question'`** —
+   `src/components/chat/tools/configs/toolConfigs.ts` registers the rich
+   `AskUserQuestion` config (with `contentType: 'question-answer'`) but not
+   `question`. The OpenCode tool falls through to `TOOL_CONFIGS.Default` (lines
+   530-549), which renders a generic `<CollapsibleDisplay title="Parameters">`
+   with `<TextContent content={JSON.stringify(input)} format="code" />`.
+
+**Net effect**: the user sees a **gray collapsible card** with the **raw JSON**
+of the question (the `questions` array with options), expandable but **not
+interactive**. There are no clickable options, no "Submit" / "Skip" buttons.
+The LLM gets no answer back because the driver cannot inject one (the
+subprocess's stdin is closed in `server/opencode-cli.js:219` before the run
+starts).
+
+### Comparison with Claude's `AskUserQuestion`
+
+| Aspect | Claude (`AskUserQuestion`) | OpenCode (`question`) |
+|---|---|---|
+| Frontend recognises the tool | Yes (`TOOL_CONFIGS['AskUserQuestion']`) | No → fallback `Default` |
+| Renderer used | `QuestionAnswerContent` (rich, with headers, badges, expand/collapse per question) | `TextContent` with raw JSON |
+| Border color | Blue (`border-l-blue-500/60` — `question` category) | Gris (`border-l-border` — `default` category) |
+| Interaction | **Interactive** — kbd 1-9, Other (kbd 0), Submit/Enter, Skip/Esc | **Read-only** — expand/collapse |
+| Round-trip answer to model | Yes, via `permission_request` + `permission_response` over WebSocket | No (stdin closed before run) |
+| `supportsPermissionRequests` | `true` | `false` |
+
+### How to close the gap (not done)
+
+To make OpenCode's `question` tool render the rich `QuestionAnswerContent`
+card, three changes are needed:
+
+1. Add `'question'` to `getToolCategory` in `ToolRenderer.tsx:45`.
+2. Add `TOOL_CONFIGS.question` mirroring the `AskUserQuestion` config but
+   keyed on `'question'`.
+3. To make it actually interactive: implement a `permission_request` /
+   `permission_response` round-trip on the opencode-cli.js side. The current
+   driver closes `opencodeProcess.stdin.end()` at line 219 before the run
+   starts; a real interactive flow would need to keep stdin open and write
+   the user's answers back into the subprocess (likely via an IPC channel
+   that OpenCode CLI does not currently expose).
+
+See [`docs/providers/claude.md#interactive-prompts-ui`](./claude.md#interactive-prompts-ui)
+for the full Claude interactive flow, and [`docs/providers/agente.md`](./agente.md)
+for the cross-provider comparison matrix.
+
+## Capabilities & UI support (OpenCode row)
+
+| Property | OpenCode value | Source |
+|---|---|---|
+| Login command | `opencode auth login` | `ProviderLoginModal.tsx:39-41` |
+| Permission modes | `['default']` only | `useChatProviderState.ts:12-18` |
+| `supportsPermissionRequests` | `false` | `provider-capabilities.service.ts:75` |
+| Interactive UI | **No** — passive card for the `question` tool (no round-trip) | `opencode-sessions.provider.ts:273-295` |
+| `tool_use` renderer | **Partial** — `question` tool falls back to `Default` collapsible (raw JSON) | `ToolRenderer.tsx:45`, `toolConfigs.ts:530-549` |
+| Custom providers | **Yes** — multi-model catalog via `opencode models`; shared SQLite | `opencode-models.provider.ts` |
+| Status | Production | — |
+
+See [`docs/providers/agente.md`](./agente.md) for the full cross-provider comparison
+table and the auth resolution matrix.
+
 ## See also
 
 - `server/modules/providers/README.md` — canonical provider-facet guide.
 - `server/modules/websocket/README.md` — message envelope and per-run event log.
 - `CLAUDE.md` — top-level project conventions and the CloudCLI runtime model.
-- `docs/providers/README.md` — index of provider documentation.
+- `docs/providers/README.md` — index of provider documentation (renamed to `agente.md`; this link may break — see `docs/providers/agente.md`).

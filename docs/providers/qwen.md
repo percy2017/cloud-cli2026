@@ -117,6 +117,15 @@ Mirror `server/opencode-cli.js:85-319`. Concretely:
   args.push(command?.trim() ?? '');   // empty for sessions without a fresh prompt
   ```
 - `qwenProcess = spawnFunction('qwen', args, { cwd, stdio: 'pipe', env: ...process.env });`
+- **Stdin handling (do NOT close early).** Unlike `opencode-cli.js:219` which closes
+  `opencodeProcess.stdin.end()` immediately after spawn (locking out future
+  round-trip responses to mid-stream tools), the qwen spawner should keep
+  `qwenProcess.stdin` open until the run completes or is aborted. This is a
+  forward-compat decision: if qwen-code later exposes an interactive flow
+  (analogous to Claude's `canUseTool` callback), the driver will need to
+  inject responses back to the subprocess over stdin. Closing it on spawn
+  forecloses that path. For the first iteration, the spawner simply does not
+  touch stdin — the CLI does not read from it.
 - `activeQwenProcesses: Map<sessionId, ChildProcess>`. `registerQwenSession()` re-keys when qwen announces its native session id (first event with `session_id`).
 - NDJSON line buffer (`split(/\r?\n/)`) — reuse pattern at `opencode-cli.js:221-229`.
 - `completeSent` flag shared between `close` and `error` handlers — `opencode-cli.js:97`.
@@ -157,18 +166,29 @@ Emit schema per docs (`qwen -p "..." --output-format stream-json
 --include-partial-messages`). Event types confirmed by the binario (`cli.js`)
 and `chunks/agent-headless-VLX4C7KX.js`:
 
-| Event type | Meaning | → NormalizedMessage kind |
-|---|---|---|
-| `system` (subtypes `session_start`, `compact_boundary`, …) | session lifecycle | `status` / `session_created` |
-| `assistant` (with `message.content[]` or `delta`) | model output | `stream_delta` / `text` |
-| `user` | echoed user message | (echo — skip or pass-through) |
-| `tool_use` | tool invocation | `tool_use` |
-| `tool_result` | tool result | `tool_result` |
-| `thinking` | reasoning | `thinking` |
-| `result` (subtypes `success`/`error`, `duration_ms`, `usage`) | run-end | `stream_end` |
-| `error` | error | `error` |
-| `permission_request` | approval UI | `permission_request` |
-| `permission_cancelled` | denied | `permission_cancelled` |
+| Event type | Meaning | → NormalizedMessage kind | First iteration? |
+|---|---|---|---|
+| `system` (subtypes `session_start`, `compact_boundary`, …) | session lifecycle | `status` / `session_created` | Yes |
+| `assistant` (with `message.content[]` or `delta`) | model output | `stream_delta` / `text` | Yes |
+| `user` | echoed user message | (echo — skip or pass-through) | Yes |
+| `tool_use` | tool invocation | `tool_use` | Yes |
+| `tool_result` | tool result | `tool_result` | Yes |
+| `thinking` | reasoning | `thinking` | Yes |
+| `result` (subtypes `success`/`error`, `duration_ms`, `usage`) | run-end | `stream_end` | Yes |
+| `error` | error | `error` | Yes |
+| `permission_request` | approval UI | `permission_request` | **Deferred** — see [section 18](#18-interactive-prompts-ui-planned) |
+| `permission_cancelled` | denied | `permission_cancelled` | **Deferred** — see [section 18](#18-interactive-prompts-ui-planned) |
+
+**Defensive normalization:** the `QwenSessionsProvider.normalizeMessage()` must
+mirror the opencode precedent at
+[`opencode-sessions.provider.ts:222-319`](../../server/modules/providers/list/opencode/opencode-sessions.provider.ts#L222)
+and return `[]` for unrecognised event types — never crash. This matters
+specifically for qwen because (a) the CLI is third-party and may evolve the
+event schema between minor versions, and (b) qwen may emit native tools with
+unrecognised names (precedent: OpenCode's `question` tool, see
+[`docs/providers/opencode.md#interactive-prompts-ui--the-question-tool-gap`](./opencode.md#interactive-prompts-ui--the-question-tool-gap)).
+Fall back to `kind: 'error'` with `text: 'unparsed_line' + raw` for shapes
+the normalizer cannot map.
 
 The exact field names (`session_id` vs `sessionId`, `message.content[]` vs
 `message.content`) are **Phase-0 discovery** items (verify by running the
@@ -189,6 +209,17 @@ defensive shape.
    - `GEMINI_API_KEY` (+ `GEMINI_MODEL`)
    - `BAILIAN_CODING_PLAN_API_KEY` (Qwen Coding Plan, base URL `coding.dashscope.aliyuncs.com/v1`)
 3. `.qwen/.env` → `.env` → `~/.qwen/.env` → `~/.env` (per docs resolution order).
+
+**Multi-source cascade pattern.** The implementation must follow the **3-source
+cascade** pattern established by codex in
+[`codex-auth.provider.ts:64-75`](../../server/modules/providers/list/codex/codex-auth.provider.ts#L64):
+walk each credential source in priority order, return the first hit, and only
+emit the literal `'Qwen not configured'` (or equivalent) when **all sources are
+empty or missing**. Each source must be a separate helper method
+(`readSettingsJson()`, `readEnvCredentials()`, etc.) so the test suite can patch
+each in isolation — see [`codex-auth.test.ts`](../../server/modules/providers/tests/codex-auth.test.ts)
+for the colocated-test pattern (10 cases, including the "all sources empty"
+negative case).
 
 **Install detection** (mirror `opencode-auth.provider.ts:31-38`):
 ```ts
@@ -573,7 +604,7 @@ en + es (mirrors in 9 other locales — de, fr, it, ja, ko, ru, tr, zh-CN, zh-TW
 - ❌ Computer Use UI panel (capability flag exists but no panel).
 - ❌ Agent Arena UI (multi-model head-to-head).
 - ❌ Refactor of `spawnFns`/`abortFns` into `provider.registry.ts` (architectural gap, follow-up).
-- ❌ `routes/git.js` commit-message generation extension (deferred until qwen's CLI gains that feature).
+- ❌ `routes/git.js` commit-message generation extension (deferred until qwen's CLI gains that feature). **Clarification:** the universal helper `ensureConventionalCommitPrefix()` in [`server/routes/git.js`](../../server/routes/git.js) already auto-prefixes any free-form commit message with `chore:` so commitlint accepts it. This applies to **all** commits made through CloudCLI's git panel, regardless of which provider is active. No qwen-specific work is required.
 - ❌ Cross-compat with `<cwd>/.claude/skills` and `<cwd>/.agents/skills` (qwen docs only mention `.qwen`).
 
 ## 15. Verification
@@ -627,6 +658,52 @@ phases 10-12 (frontend + i18n + tests) ~2-3 days. Total ~1 week.
 - [`docs/providers/gemini.md`](./gemini.md) — precedent for JSONL session
   storage + stream-json output (qwen follows gemini's pattern for sessions).
 - [`docs/providers/codex.md`](./codex.md) — precedent for "resume last
-  session" via `--continue` flag (qwen equivalent is `qwen --continue`).
-- [`server/modules/providers/README.md`](../../server/modules/providers/README.md) —
-  facet contract, registration, types.
+  session" via `--continue` flag (qwen equivalent is `qwen --continue`). Also
+  precedent for the **3-source auth cascade** pattern (auth.json / config.toml /
+  env vars) — qwen follows the same shape with settings.json / env vars.
+- [`docs/providers/agente.md`](./agente.md) — cross-provider comparison matrix
+  + auth resolution table (qwen row is marked DRAFT). When implementation starts,
+  the qwen row of both matrices must be filled in **in the same commit**.
+- [`docs/voice.md`](../voice.md) — orthogonal voice feature (STT/TTS). No
+  qwen-specific work required; voice is provider-agnostic and proxies to any
+  OpenAI-compatible audio backend.
+- `server/modules/providers/README.md` — facet contract, registration, types.
+
+## 18. Interactive prompts UI (planned)
+
+In the first iteration, qwen will mirror the **Codex pattern** — capability off,
+CLI handles permission decisions internally via spawn flags. Concretely:
+
+- `supportsPermissionRequests: false` in `provider-capabilities.service.ts`.
+- Chat composer shows `<QwenPermissions />` (a thin copy of `<CodexPermissions />`)
+  with the same three modes (`default` / `acceptEdits` / `bypassPermissions`).
+- No `<PermissionRequestsBanner />` ever appears for qwen sessions.
+- No `AskUserQuestionPanel` rendered (qwen has no equivalent tool name yet).
+
+If qwen-code later exposes a `canUseTool`-style mid-stream callback, the
+permission flow can be enabled the same way Claude's is. The plan-doc does not
+address this; it's a follow-up.
+
+## 19. Capabilities & UI support (Qwen row — DRAFT)
+
+| Property | Qwen value (planned) | Source |
+|---|---|---|
+| Login command | (planned) `qwen login` | TBD (Phase 0) |
+| Permission modes | (planned) `['default', 'bypassPermissions']` first iteration (mirrors opencode; CLI has 5 modes — `plan`, `default`, `auto-edit`, `auto`, `yolo` — extended later) | section 12.1 |
+| MCP scopes | (planned) `['user', 'project']` | section 8 |
+| MCP transports | (planned) `['stdio', 'http', 'sse']` | section 8 |
+| `supportsPermissionRequests` | (planned) `false` | mirrors Codex (first iteration) |
+| Interactive UI | (planned) **No** | mirrors Codex |
+| `tool_use` renderer | (planned) Rich (same renderers as Claude/Codex) | `toolConfigs.ts` |
+| Custom providers | (planned) Yes — multi-model like OpenCode | TBD |
+| Status | **DRAFT — plan only** | `docs/providers/agente.md` |
+
+See [`docs/providers/agente.md`](./agente.md) for the full cross-provider
+comparison table and the auth resolution matrix.
+
+When implementation starts, the qwen row of the comparative table in
+[`docs/providers/agente.md`](./agente.md) must be updated **in the same commit**:
+- Capabilities matrix (login / permission modes / supportsPermissionRequests / interactive UI / tool_use renderer / custom providers / status).
+- Auth resolution matrix (primary source / fallbacks / custom providers).
+
+This is what the `Adding a new provider doc` section of `agente.md` mandates.

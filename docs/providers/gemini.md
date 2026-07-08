@@ -750,11 +750,57 @@ Logs worth grepping:
 - **No `cloudcli gemini …` sub-command.** The only public entry point is the chat panel's
   WebSocket.
 
+## Interactive prompts UI
+
+Gemini is the most explicit of the four "non-Claude" providers about having no
+interactive permission flow. The intro of this doc states:
+
+> Unlike Claude, Gemini has no interactive permission flow — the CLI runs in
+> `--yolo` or auto-edit mode by default.
+
+Concretely, `server/modules/providers/services/provider-capabilities.service.ts:66`
+sets `supportsPermissionRequests: false`. This means:
+
+1. **The Gemini CLI never emits a `permission_request` frame** over WebSocket.
+   All approval decisions happen inside the CLI subprocess via the `--approval-mode`
+   flag at spawn time (default: `--yolo` or `auto_edit`).
+2. **`<PermissionRequestsBanner />` never appears** in the chat composer for
+   gemini sessions.
+3. **`AskUserQuestionPanel` is never rendered.** If the Gemini CLI internally asks
+   the user something via its own TUI, that interaction happens outside
+   CloudCLI (in the embedded terminal if the user is running `gemini auth login`
+   from there).
+
+The chat composer still shows `<GeminiPermissions />` (in
+`PermissionsContent.tsx`) which lets the user pick between four modes
+(`default` / `autoEdit` / `yolo` / `plan`). The choice is forwarded to the
+spawn command as `--approval-mode` flags; the CLI handles any internal prompts
+outside the WebSocket envelope.
+
+See [`docs/providers/claude.md#interactive-prompts-ui`](./claude.md#interactive-prompts-ui)
+for the full Claude interactive flow, and [`docs/providers/agente.md`](./agente.md)
+for the cross-provider comparison matrix.
+
+## Capabilities & UI support (Gemini row)
+
+| Property | Gemini value | Source |
+|---|---|---|
+| Login command | `gemini auth login` | `ProviderLoginModal.tsx` |
+| Permission modes | `default` \| `autoEdit` \| `yolo` \| `plan` (mapped to `--approval-mode`) | `GeminiPermissions`, `PermissionsContent.tsx` |
+| `supportsPermissionRequests` | `false` | `provider-capabilities.service.ts:66` |
+| Interactive UI | **No** — CLI does not surface interactive prompts; runs in `--yolo` or auto-edit mode by default | `docs/providers/gemini.md` intro |
+| `tool_use` renderer | Rich (`BashCommandDisplay`, `ToolDiffViewer`, `FileListContent`, etc.) | `toolConfigs.ts` (same as Claude) |
+| Custom providers | No | `gemini-auth.provider.ts` |
+| Status | Production | — |
+
+See [`docs/providers/agente.md`](./agente.md) for the full cross-provider comparison
+table and the auth resolution matrix.
+
 ## See also
 
 - `server/modules/providers/README.md` — canonical provider-facet guide.
 - `server/modules/websocket/README.md` — message envelope and per-run event log.
 - `CLAUDE.md` — top-level project conventions and the CloudCLI runtime model.
-- `docs/providers/README.md` — index of provider documentation.
+- `docs/providers/README.md` — index of provider documentation (renamed to `agente.md`; this link may break — see `docs/providers/agente.md`).
 - `docs/providers/opencode.md` — sibling subprocess+stdIO comparison (different CLI, similar shape).
 - `docs/providers/claude.md` — sibling in-process-vs-subprocess comparison.
