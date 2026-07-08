@@ -15,6 +15,7 @@ import Database from 'better-sqlite3';
 import { AppError, WORKSPACES_ROOT, getOpenCodeDatabasePath, validateWorkspacePath } from '@/shared/utils.js';
 import { closeSessionsWatcher, initializeSessionsWatcher } from '@/modules/providers/index.js';
 import { createWebSocketServer } from '@/modules/websocket/index.js';
+import { treeCache } from '@/modules/files/tree-cache.js';
 
 import { getConnectableHost } from '../shared/networkHosts.js';
 
@@ -711,7 +712,29 @@ app.get('/api/projects/:projectId/files', authenticateToken, async (req, res) =>
             15,
             Math.max(1, Number.parseInt(req.query.depth, 10) || 10)
         );
+        const projectId = req.params.projectId;
+        const bypassCache = req.query.fresh === '1' || req.query.fresh === 'true';
+
+        // Short-TTL cache around `getFileTree()`. Re-opening the Files tab
+        // within ~30s is now a near-zero-cost lookup instead of a full
+        // directory walk. Pass `?fresh=1` to force a rebuild (useful for the
+        // editor after an external mutation, or for debugging).
+        if (!bypassCache) {
+            const cached = treeCache.get(projectId, depth, showHidden);
+            if (cached !== undefined) {
+                res.set('X-File-Tree-Cache', 'HIT');
+                return res.json(cached);
+            }
+        }
+
+        const startedAt = Date.now();
         const files = await getFileTree(actualPath, depth, 0, showHidden);
+        const elapsedMs = Date.now() - startedAt;
+        if (!bypassCache) {
+            treeCache.set(projectId, depth, showHidden, files);
+        }
+        res.set('X-File-Tree-Cache', bypassCache ? 'BYPASS' : 'MISS');
+        res.set('X-File-Tree-Elapsed-Ms', String(elapsedMs));
         res.json(files);
     } catch (error) {
         console.error('[ERROR] File tree error:', error.message);
@@ -831,6 +854,8 @@ app.post('/api/projects/:projectId/files/create', authenticateToken, async (req,
             type,
             message: `${type === 'file' ? 'File' : 'Directory'} created successfully`
         });
+        // Invalidate the cached tree so the next Files-tab open sees the change.
+        treeCache.invalidate(req.params.projectId);
     } catch (error) {
         console.error('Error creating file/directory:', error);
         if (error.code === 'EACCES') {
@@ -906,6 +931,8 @@ app.put('/api/projects/:projectId/files/rename', authenticateToken, async (req, 
             newName,
             message: 'Renamed successfully'
         });
+        // Invalidate the cached tree so the next Files-tab open sees the new name.
+        treeCache.invalidate(req.params.projectId);
     } catch (error) {
         console.error('Error renaming file/directory:', error);
         if (error.code === 'EACCES') {
@@ -971,6 +998,8 @@ app.delete('/api/projects/:projectId/files', authenticateToken, async (req, res)
             type: stats.isDirectory() ? 'directory' : 'file',
             message: 'Deleted successfully'
         });
+        // Invalidate the cached tree so the next Files-tab open sees the deletion.
+        treeCache.invalidate(req.params.projectId);
     } catch (error) {
         console.error('Error deleting file/directory:', error);
         if (error.code === 'EACCES') {
@@ -1137,6 +1166,8 @@ const uploadFilesHandler = async (req, res) => {
                 targetPath: resolvedTargetDir,
                 message: `Uploaded ${uploadedFiles.length} ${uploadedFiles.length === 1 ? 'file' : 'files'} successfully`
             });
+            // Invalidate the cached tree so the next Files-tab open shows the new files.
+            treeCache.invalidate(req.params.projectId);
         } catch (error) {
             console.error('Error uploading files:', error);
             // Clean up any remaining temp files

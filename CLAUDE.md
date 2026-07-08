@@ -288,6 +288,46 @@ For **curated plugins** (those listed as recommendations in `src/components/plug
 
 All Claude Code tools are disabled by default in the UI — users opt in via Settings. Backend API routes (except `/api/auth`, `/health`, static, and `/api/browser-use-mcp`) require `authenticateToken`. Workspace path operations (`server/utils/...`, project file APIs) must validate that resolved paths stay under the project root before any filesystem mutation.
 
+## Source control & commit UX
+
+The git panel (`src/components/git-panel/`) is the user-facing surface for staging, committing, and pushing. The backend endpoints live in `server/routes/git.js` (single router, ~1800 lines). The husky hooks at `.husky/commit-msg` (commitlint) and `.husky/pre-commit` (lint-staged) run for **every** `git commit`, including those spawned by the backend — there is no bypass.
+
+### Commit message handling — auto-prefix for free-form text
+
+The project's `commitlint.config.js` extends `@commitlint/config-conventional`, so a commit subject must start with a type (`feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`) followed by `:` (and optionally `(scope)`). Most users in the UI just type free-form text, so `server/routes/git.js` exposes `ensureConventionalCommitPrefix(rawMessage)`:
+
+- If the message already starts with a recognized type prefix (case-insensitive, optional `(scope)`, with or without `!`), return it unchanged.
+- Otherwise prepend `chore: ` so commitlint accepts it.
+
+`POST /api/git/commit` calls this helper before spawning `git commit -m`. `POST /api/git/initial-commit` is unaffected (its subject is the literal `"Initial commit"`, which is already Conventional-Commits-shaped: `chore`-prefixed by the helper on the fly). Keep the regex and the type list in `CONVENTIONAL_COMMIT_TYPES` in sync with `commitlint.config.js`.
+
+### Commit error surfacing (no more silent failures)
+
+`POST /api/git/commit` catches the `git` spawn error and surfaces a translated 400 instead of a generic 500. The handler in `server/routes/git.js` (the `catch` of `/commit`) recognizes these stderr patterns and returns a user-readable `details` field:
+
+- `subject may not be empty [subject-empty]` / `type may not be empty [type-empty]` from commitlint → "Commit message must follow Conventional Commits: `type(scope): subject`" with the valid type list and an example. (Only reachable if `ensureConventionalCommitPrefix` was bypassed.)
+- `Please tell me who you are` / `unable to auto-detect email address` from git → "Git identity not configured" with a pointer to Settings → Git Configuration.
+- `nothing to commit` → 400 with a clear "All selected files are already committed" message.
+
+The frontend (`useGitPanelController.commitChanges`) reads `data.details` and passes `data.error` into `setOperationError(...)`, which the `GitPanelHeader` renders as a dismissable banner. The previous behavior — `console.error` and silent UI — is gone. **Never** call `console.error` for a `data.success === false` response from a git endpoint; always go through `setOperationError`.
+
+### Git panel — don't refetch on session_upserted
+
+The version-control panel is the only place in the app that visually re-fetched (and re-mounted `ChangesView`) every few seconds while Claude was active. Root cause: `useProjectsState` rebuilds `selectedProject` on every `session_upserted` (per-tool-call, since the provider writes a JSONL entry per tool invocation), and `useGitPanelController`'s main `useEffect` had `selectedProject` in its dep array, so it re-ran and called `fetchGitStatus()` constantly. `key={selectedProject.fullPath}` on `<ChangesView>` also re-mounted the subtree on each new object identity.
+
+The fix lives in `src/components/git-panel/view/GitPanel.tsx`. The component wraps the incoming `selectedProject` in `useMemo` keyed on `[selectedProject?.projectId, selectedProject?.fullPath]`, returning a copy with `sessions: []` (the panel never reads them). The stabilized object is passed into `useGitPanelController`, into `useRevertLocalCommit`, and into `<ChangesView key={stableProject.fullPath} />`. From that point on, the controller's effects (which depend on `projectId`/`fullPath`) fire exactly once per real project change. To verify, add a temporary `console.log('[DEBUG-GIT-PANEL] render', Date.now())` in the component body — without the fix it logs continuously while Claude runs; with the fix it logs twice (mount + first project change) and goes quiet.
+
+### File streaming endpoint — reject directories explicitly
+
+`server/index.js` exposes a binary file streaming endpoint. The old code called `fs.createReadStream(resolved)` without checking whether the path was a directory, producing a mid-stream `EISDIR: illegal operation on a directory, read` and cutting the response. The fix calls `fsPromises.stat(resolved)` first and returns `400 "Path is a directory, not a file"` if `isDirectory()`. If you add new file-serving endpoints, mirror the same `stat().isFile()` guard.
+
+### Provider log noise
+
+Two recurring entries in the error log were noise, not real failures:
+
+- `SDK query error: ede_diagnostic result_type=user last_content_type=n/a stop_reason=tool_use` in `server/claude-sdk.js`. The Anthropic SDK reports sessions that ended on `stop_reason: tool_use` (a normal continuation that resumes on the next user message) as `ede_diagnostic` errors. The catch now detects `/ede_diagnostic/` and demotes it to `console.warn`.
+- `[Chat] Provider runtime "opencode" failed: OpenCode CLI process was terminated` in `server/modules/websocket/services/chat-websocket.service.ts`. The OpenCode CLI child gets killed whenever PM2 restarts the Node parent. The catch detects this specific message for the `opencode` provider and demotes it to `console.warn`; all other provider failures stay at `console.error`.
+
 ## Environment
 
 - Node 22+ (`.nvmrc`). `postinstall` runs `scripts/fix-node-pty.js` to patch the native `node-pty` for the current Node ABI; if `npm install` fails on `node-pty`, this script is the first place to look.
