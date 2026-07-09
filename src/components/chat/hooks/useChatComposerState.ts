@@ -612,7 +612,14 @@ export function useChatComposerState({
           });
 
           if (!response.ok) {
-            throw new Error('Failed to upload images');
+            let detail = `HTTP ${response.status}`;
+            try {
+              const errorBody = await response.clone().json();
+              if (errorBody?.error) detail = errorBody.error;
+            } catch {
+              /* body is not JSON (or empty) — keep the status code as the detail */
+            }
+            throw new Error(detail);
           }
 
           const result = await response.json();

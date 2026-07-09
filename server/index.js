@@ -1200,7 +1200,51 @@ app.post('/api/projects/:projectId/files/upload', authenticateToken, uploadFiles
 // Image upload endpoint. Accepts the DB-assigned `projectId` (not a folder name)
 // but the current implementation doesn't need to touch the project directory,
 // so we just leave the param rename for consistency with the rest of the API.
+//
+// Tuned to be forgiving: many clients send screenshots in HEIC (iPhone),
+// AVIF, BMP or TIFF; legacy browsers mislabel mimetypes as `application/octet-stream`
+// or `binary/octet-stream`; and reverse proxies sometimes strip the multipart
+// boundary. We accept anything that starts with `image/` plus the common
+// "octet-stream" fallback (validated by sniffing the magic bytes below) and
+// bump the per-file limit to 20MB so a hi-res screenshot never trips it.
+const IMAGE_MAX_FILES = 10;
+const IMAGE_MAX_BYTES = 20 * 1024 * 1024; // 20 MB per file
+const ALLOWED_IMAGE_MIMES = new Set([
+    'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml',
+    'image/avif', 'image/heic', 'image/heif', 'image/bmp', 'image/tiff', 'image/x-icon',
+    'application/octet-stream', 'binary/octet-stream',
+]);
+
+const sniffImageMime = (buffer) => {
+    if (!buffer || buffer.length < 4) return null;
+    // PNG: 89 50 4E 47
+    if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) return 'image/png';
+    // JPEG: FF D8 FF
+    if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) return 'image/jpeg';
+    // GIF: 47 49 46 38
+    if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x38) return 'image/gif';
+    // WEBP: 52 49 46 46 ... 57 45 42 50 (RIFF....WEBP)
+    if (buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46
+        && buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50) return 'image/webp';
+    // BMP: 42 4D
+    if (buffer[0] === 0x42 && buffer[1] === 0x4D) return 'image/bmp';
+    // TIFF: 49 49 2A 00 or 4D 4D 00 2A
+    if ((buffer[0] === 0x49 && buffer[1] === 0x49 && buffer[2] === 0x2A && buffer[3] === 0x00)
+        || (buffer[0] === 0x4D && buffer[1] === 0x4D && buffer[2] === 0x00 && buffer[3] === 0x2A)) return 'image/tiff';
+    // HEIC/HEIF: ... ftypheic / ftypheix / ftypheim / ftyphevc / ftyphevx / ftypheis / ftypmif1
+    if (buffer.length >= 12 && buffer[4] === 0x66 && buffer[5] === 0x74 && buffer[6] === 0x79 && buffer[7] === 0x70) {
+        const brand = buffer.slice(8, 12).toString('ascii');
+        if (['heic', 'heix', 'heim', 'hevc', 'hevx', 'heis', 'mif1', 'msf1'].includes(brand)) return 'image/heic';
+    }
+    // SVG (text-based, starts with `<` after BOM/whitespace)
+    const head = buffer.slice(0, 64).toString('utf8').trim().toLowerCase();
+    if (head.startsWith('<svg') || head.startsWith('<?xml')) return 'image/svg+xml';
+    return null;
+};
+
 app.post('/api/projects/:projectId/upload-images', authenticateToken, async (req, res) => {
+    const logTag = '[upload-images]';
+    console.log(`${logTag} request from user=${req.user?.id} content-type=${req.headers['content-type'] || '<none>'} content-length=${req.headers['content-length'] || '<unknown>'}`);
     try {
         const multer = (await import('multer')).default;
         const path = (await import('path')).default;
@@ -1210,43 +1254,70 @@ app.post('/api/projects/:projectId/upload-images', authenticateToken, async (req
         // Configure multer for image uploads
         const storage = multer.diskStorage({
             destination: async (req, file, cb) => {
-                const uploadDir = path.join(os.tmpdir(), 'claude-ui-uploads', String(req.user.id));
-                await fs.mkdir(uploadDir, { recursive: true });
-                cb(null, uploadDir);
+                try {
+                    const uploadDir = path.join(os.tmpdir(), 'claude-ui-uploads', String(req.user?.id ?? 'anon'));
+                    await fs.mkdir(uploadDir, { recursive: true });
+                    cb(null, uploadDir);
+                } catch (err) {
+                    console.error(`${logTag} mkdir failed:`, err);
+                    cb(err);
+                }
             },
             filename: (req, file, cb) => {
                 const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-                const sanitizedName = file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
+                const sanitizedName = (file.originalname || 'image').replace(/[^a-zA-Z0-9.-]/g, '_');
                 cb(null, uniqueSuffix + '-' + sanitizedName);
             }
         });
 
         const fileFilter = (req, file, cb) => {
-            const allowedMimes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml'];
-            if (allowedMimes.includes(file.mimetype)) {
+            if (ALLOWED_IMAGE_MIMES.has(file.mimetype)) {
                 cb(null, true);
-            } else {
-                cb(new Error('Invalid file type. Only JPEG, PNG, GIF, WebP, and SVG are allowed.'));
+                return;
             }
+            // Last-chance sniff: read the first 4 KB of the temp file to detect
+            // the actual format. Multer invokes fileFilter before persisting
+            // the full file, so we sniff from the in-memory buffer when available.
+            try {
+                const buf = (file.buffer && file.buffer.length > 0) ? file.buffer : null;
+                const sniffed = buf ? sniffImageMime(buf) : null;
+                if (sniffed) {
+                    file.mimetype = sniffed; // canonicalize so the response uses the real type
+                    cb(null, true);
+                    return;
+                }
+            } catch (err) {
+                console.warn(`${logTag} mime sniff failed for ${file.originalname}:`, err.message);
+            }
+            cb(new Error(`Invalid file type "${file.mimetype}". Allowed: JPEG, PNG, GIF, WebP, SVG, AVIF, HEIC, BMP, TIFF.`));
         };
 
         const upload = multer({
             storage,
             fileFilter,
             limits: {
-                fileSize: 5 * 1024 * 1024, // 5MB
-                files: 5
-            }
+                fileSize: IMAGE_MAX_BYTES,
+                files: IMAGE_MAX_FILES,
+            },
         });
 
         // Handle multipart form data
-        upload.array('images', 5)(req, res, async (err) => {
+        upload.array('images', IMAGE_MAX_FILES)(req, res, async (err) => {
             if (err) {
-                return res.status(400).json({ error: err.message });
+                // Distinguish the common cases with a friendly message; keep the
+                // raw multer error in the log so operators can debug without
+                // asking the user to open DevTools.
+                console.warn(`${logTag} multer error:`, err.message);
+                const msg = err.code === 'LIMIT_FILE_SIZE'
+                    ? `File too large. Maximum size is ${IMAGE_MAX_BYTES / (1024 * 1024)}MB.`
+                    : err.code === 'LIMIT_FILE_COUNT'
+                        ? `Too many files. Maximum is ${IMAGE_MAX_FILES} images per message.`
+                        : err.message;
+                return res.status(400).json({ error: msg });
             }
 
             if (!req.files || req.files.length === 0) {
-                return res.status(400).json({ error: 'No image files provided' });
+                return res.status(400).json({ error: 'No image files received. Make sure the field name is "images" and the request is multipart/form-data.' });
             }
 
             try {
@@ -1255,31 +1326,38 @@ app.post('/api/projects/:projectId/upload-images', authenticateToken, async (req
                     req.files.map(async (file) => {
                         // Read file and convert to base64
                         const buffer = await fs.readFile(file.path);
-                        const base64 = buffer.toString('base64');
-                        const mimeType = file.mimetype;
+                        // Canonicalize the mimetype: if the client sent
+                        // octet-stream or anything we couldn't trust, re-sniff
+                        // from the on-disk buffer so the data: URL the UI shows
+                        // actually matches what the image really is.
+                        let mimeType = file.mimetype;
+                        if (!mimeType.startsWith('image/') || mimeType === 'application/octet-stream' || mimeType === 'binary/octet-stream') {
+                            const sniffed = sniffImageMime(buffer);
+                            if (sniffed) mimeType = sniffed;
+                        }
 
                         // Clean up temp file immediately
-                        await fs.unlink(file.path);
+                        await fs.unlink(file.path).catch(() => { });
 
                         return {
                             name: file.originalname,
-                            data: `data:${mimeType};base64,${base64}`,
+                            data: `data:${mimeType};base64,${buffer.toString('base64')}`,
                             size: file.size,
-                            mimeType: mimeType
+                            mimeType,
                         };
                     })
                 );
 
                 res.json({ images: processedImages });
             } catch (error) {
-                console.error('Error processing images:', error);
+                console.error(`${logTag} processing error:`, error);
                 // Clean up any remaining files
-                await Promise.all(req.files.map(f => fs.unlink(f.path).catch(() => { })));
+                await Promise.all((req.files || []).map(f => fs.unlink(f.path).catch(() => { })));
                 res.status(500).json({ error: 'Failed to process images' });
             }
         });
     } catch (error) {
-        console.error('Error in image upload endpoint:', error);
+        console.error(`${logTag} top-level error:`, error);
         res.status(500).json({ error: 'Internal server error' });
     }
 });
