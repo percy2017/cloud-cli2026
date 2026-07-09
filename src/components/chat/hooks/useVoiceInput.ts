@@ -63,6 +63,18 @@ export function useVoiceInput(
     if (startingRef.current || (recorderRef.current && recorderRef.current.state !== 'inactive')) return;
     startingRef.current = true;
     try {
+      // `navigator.mediaDevices` is only exposed on secure origins (HTTPS or
+      // localhost). On plain HTTP origins the browser leaves the property
+      // undefined and any getUserMedia call throws a confusing
+      // "Cannot read properties of undefined" error. Surface a clear message
+      // so the user knows it's a transport issue, not a code bug.
+      if (typeof navigator === 'undefined' || !navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
+        const isInsecure = typeof window !== 'undefined' && window.isSecureContext === false;
+        onError?.(isInsecure
+          ? 'Mic unavailable: this site must be served over HTTPS for the browser to allow microphone access.'
+          : 'Mic unavailable: your browser does not support audio capture on this origin.');
+        return;
+      }
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true },
       });

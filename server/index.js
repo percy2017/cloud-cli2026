@@ -1244,18 +1244,28 @@ const sniffImageMime = (buffer) => {
 
 app.post('/api/projects/:projectId/upload-images', authenticateToken, async (req, res) => {
     const logTag = '[upload-images]';
-    console.log(`${logTag} request from user=${req.user?.id} content-type=${req.headers['content-type'] || '<none>'} content-length=${req.headers['content-length'] || '<unknown>'}`);
+    console.log(`${logTag} request from user=${req.user?.id} project=${req.params.projectId} content-type=${req.headers['content-type'] || '<none>'} content-length=${req.headers['content-length'] || '<unknown>'}`);
     try {
         const multer = (await import('multer')).default;
         const path = (await import('path')).default;
         const fs = (await import('fs')).promises;
         const os = (await import('os')).default;
 
+        // Resolve the project's working directory so we always drop uploads
+        // into `<project>/.tmp/uploads/<timestamp>/`, matching the same layout
+        // Claude / Gemini SDKs already use for attachments. Falling back to
+        // the system temp dir only when the project cannot be resolved so the
+        // user always sees an error path that lives next to their files.
+        const projectRoot = await projectsDb.getProjectPathById(req.params.projectId).catch(() => null);
+        const uploadBase = projectRoot
+            ? path.join(projectRoot, '.tmp', 'uploads')
+            : path.join(os.tmpdir(), 'claude-ui-uploads', String(req.user?.id ?? 'anon'));
+
         // Configure multer for image uploads
         const storage = multer.diskStorage({
             destination: async (req, file, cb) => {
                 try {
-                    const uploadDir = path.join(os.tmpdir(), 'claude-ui-uploads', String(req.user?.id ?? 'anon'));
+                    const uploadDir = path.join(uploadBase, Date.now().toString());
                     await fs.mkdir(uploadDir, { recursive: true });
                     cb(null, uploadDir);
                 } catch (err) {
@@ -1264,9 +1274,8 @@ app.post('/api/projects/:projectId/upload-images', authenticateToken, async (req
                 }
             },
             filename: (req, file, cb) => {
-                const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
                 const sanitizedName = (file.originalname || 'image').replace(/[^a-zA-Z0-9.-]/g, '_');
-                cb(null, uniqueSuffix + '-' + sanitizedName);
+                cb(null, sanitizedName);
             }
         });
 

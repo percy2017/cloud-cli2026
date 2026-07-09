@@ -168,7 +168,10 @@
       "default": "Selecciona un proveedor arriba para empezar",
       "qwen": "Listo para usar Qwen con {{model}}. Empieza a escribir tu mensaje abajo."
     },
-    "pressToSearch": "Pulsa <kbd>{{shortcut}}</kbd> para buscar sesiones, archivos y commits"
+    "pressToSearch": "Pulsa <kbd>{{shortcut}}</kbd> para buscar sesiones, archivos y commits",
+    "chooseAModel": "Elige un modelo",
+    "searchModels": "Buscar modelos...",
+    "noModelsFound": "No se encontraron modelos."
   },
   "session": {
     "continue": {

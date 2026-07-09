@@ -21,14 +21,14 @@ import {
 
 export const CODEX_FALLBACK_MODELS: ProviderModelsDefinition = {
   OPTIONS: [
-    { value: 'gpt-5.5', label: 'gpt-5.5' },
     { value: 'MiniMax-M3', label: 'MiniMax-M3' },
+    { value: 'gpt-5.5', label: 'gpt-5.5' },
     { value: 'gpt-5.4', label: 'gpt-5.4' },
     { value: 'gpt-5.4-mini', label: 'gpt-5.4-mini' },
     { value: 'gpt-5.3-codex', label: 'gpt-5.3-codex' },
     { value: 'gpt-5.2', label: 'gpt-5.2' },
   ],
-  DEFAULT: 'gpt-5.4',
+  DEFAULT: 'MiniMax-M3',
 };
 
 type CodexCachedModel = {
@@ -109,6 +109,14 @@ const buildCodexModelsDefinition = async (models: CodexCachedModel[]): Promise<P
 
   const sortedModels = [...models]
     .filter((model) => model.visibility !== 'hidden' && model.supported_in_api !== false)
+    // Only show the gpt-5.x family + MiniMax-M3 in the picker. `codex` is
+    // configured to route everything through api.openai.com so anything
+    // outside that family is either deprecated, deprecated-in-fine-tune, or
+    // not part of the catalog we want to ship. Filter to the slugs we expose.
+    .filter((model) => {
+      const slug = model.slug || '';
+      return slug.startsWith('gpt-5.');
+    })
     .sort((left, right) => readCodexPriority(left.priority) - readCodexPriority(right.priority));
 
   const options: ProviderModelOption[] = [];

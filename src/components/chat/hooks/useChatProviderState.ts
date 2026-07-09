@@ -11,11 +11,11 @@ import type {
 
 const FALLBACK_DEFAULT_MODEL: Record<LLMProvider, string> = {
   claude: 'opus',
-  cursor: 'gpt-5.3-codex',
-  codex: 'gpt-5.4',
+  cursor: '',
+  codex: 'MiniMax-M3',
   gemini: 'gemini-3.1-pro-preview',
-  opencode: 'anthropic/claude-sonnet-4-5',
-  qwen: 'qwen3-coder-plus',
+  opencode: 'MiniMax-M3',
+  qwen: 'MiniMax-M3',
 };
 
 /**

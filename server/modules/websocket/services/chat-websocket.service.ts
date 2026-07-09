@@ -94,6 +94,28 @@ function sendProtocolError(
   });
 }
 
+/**
+ * Acknowledges a client-initiated request (e.g. `chat.abort`) that produced
+ * no-op behaviour. Used for idempotent paths where the action is the desired
+ * outcome regardless of whether there was actually work to do — the user
+ * clicked Stop, the run already ended, and we don't want to surface a
+ * protocol error for that.
+ */
+function sendProtocolAck(
+  ws: WebSocket,
+  type: string,
+  sessionId: string,
+  payload: Record<string, unknown> = {}
+): void {
+  sendJson(ws, {
+    kind: 'protocol_ack',
+    type,
+    sessionId,
+    timestamp: new Date().toISOString(),
+    ...payload,
+  });
+}
+
 function readRequiredSessionId(data: AnyRecord): string | null {
   const sessionId = typeof data.sessionId === 'string' ? data.sessionId.trim() : '';
   return sessionId.length > 0 ? sessionId : null;
@@ -209,7 +231,13 @@ async function handleChatAbort(
 
   const run = chatRunRegistry.getRun(sessionId);
   if (!run || run.status !== 'running') {
-    sendProtocolError(ws, 'NO_ACTIVE_RUN', `Session "${sessionId}" has no active run.`, sessionId);
+    // Idempotent abort: if the user clicks Stop twice, or after the run has
+    // already terminated, surface a no-op rather than a protocol error. The
+    // browser is happy to receive a terminal `complete` event again — the
+    // registry's dedupe logic drops the duplicate — so we emit one to keep
+    // the UI state machine consistent. See chat-websocket.service:runRegistry
+    // dedup behavior for the matching backend rule.
+    sendProtocolAck(ws, 'chat.abort', sessionId, { aborted: false, reason: 'no_active_run' });
     return;
   }
 
