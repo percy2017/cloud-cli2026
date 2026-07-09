@@ -1251,28 +1251,75 @@ app.post('/api/projects/:projectId/upload-images', authenticateToken, async (req
         const fs = (await import('fs')).promises;
         const os = (await import('os')).default;
 
-        // Resolve the project's working directory so we always drop uploads
-        // into `<project>/.tmp/uploads/<timestamp>/`, matching the same layout
-        // Claude / Gemini SDKs already use for attachments. Falling back to
-        // the system temp dir only when the project cannot be resolved so the
-        // user always sees an error path that lives next to their files.
-        const projectRoot = await projectsDb.getProjectPathById(req.params.projectId).catch(() => null);
-        const uploadBase = projectRoot
-            ? path.join(projectRoot, '.tmp', 'uploads')
-            : path.join(os.tmpdir(), 'claude-ui-uploads', String(req.user?.id ?? 'anon'));
-
-        // Configure multer for image uploads
-        const storage = multer.diskStorage({
-            destination: async (req, file, cb) => {
+        // Resolve the project's working directory. Uploads always drop into
+        // `<project>/.tmp/uploads/<timestamp>/` so they live next to the
+        // `.tmp/images/<timestamp>/` directories Claude / Gemini SDKs already
+        // create. Multer 1.x does NOT support `destination` as an async
+        // function — we pre-create the dir synchronously and pass the path
+        // as a string so multer writes files into a real, existing folder.
+        //
+        // NOTE: `getProjectPathById` is SYNCHRONOUS (better-sqlite3). It
+        // returns `string | null` and never throws. Do NOT chain `.catch()`
+        // here — it's not a Promise, that's what was causing the 500.
+        //
+        // Orphan-projects recovery: the composer can send a projectId that
+        // was synthesized by the frontend (e.g. for a workspace that the
+        // Claude SDK discovered via `/root/.claude/projects/-<basename>/...`
+        // but never went through `createProjectPath`). When that happens we
+        // auto-register the project on the spot, preferring the explicit
+        // `X-Project-Path` header from the frontend, then a recent session
+        // whose jsonl_path or custom_name points back to the orphan, and
+        // finally a safe fallback under `WORKSPACES_ROOT` (or `os.homedir()`
+        // when that isn't set) so the upload always lands somewhere the user
+        // can find it.
+        let projectRoot = projectsDb.getProjectPathById(req.params.projectId);
+        if (!projectRoot) {
+            const headerPath = (req.headers['x-project-path'] || '').toString().trim();
+            const orphanProjectName = (req.headers['x-project-name'] || '').toString().trim() || `orphan-${req.params.projectId.slice(0, 8)}`;
+            let inferredPath = '';
+            if (headerPath) {
+                inferredPath = headerPath;
+            } else {
+                // Fall back to the most-recent session's project_path. This
+                // catches orphan projects that the Claude SDK auto-created
+                // via `/root/.claude/projects/-<basename>/...` without ever
+                // registering in the projects table.
                 try {
-                    const uploadDir = path.join(uploadBase, Date.now().toString());
-                    await fs.mkdir(uploadDir, { recursive: true });
-                    cb(null, uploadDir);
-                } catch (err) {
-                    console.error(`${logTag} mkdir failed:`, err);
-                    cb(err);
+                    const recentSession = sessionsDb.getAllSessions()[0];
+                    inferredPath = recentSession?.project_path || '';
+                } catch {
+                    inferredPath = '';
                 }
-            },
+            }
+            if (!inferredPath) {
+                const fallbackRoot = (process.env.WORKSPACES_ROOT && process.env.WORKSPACES_ROOT !== '/') ? process.env.WORKSPACES_ROOT : os.homedir();
+                inferredPath = path.join(fallbackRoot, orphanProjectName);
+            }
+            try {
+                const result = projectsDb.createProjectPath(inferredPath, orphanProjectName);
+                projectRoot = result.project?.project_path || inferredPath;
+                console.warn(`${logTag} auto-registered orphan project id=${req.params.projectId} → ${projectRoot}`);
+            } catch (regErr) {
+                console.error(`${logTag} failed to auto-register orphan project ${req.params.projectId} at ${inferredPath}:`, regErr);
+                projectRoot = inferredPath;
+            }
+        }
+
+        let uploadDir;
+        try {
+            uploadDir = path.join(projectRoot, '.tmp', 'uploads', Date.now().toString());
+            await fs.mkdir(uploadDir, { recursive: true });
+        } catch (err) {
+            console.error(`${logTag} mkdir failed for ${uploadDir}:`, err);
+            return res.status(500).json({ error: 'Failed to prepare upload directory.' });
+        }
+
+        // Configure multer for image uploads. `destination` is a plain string
+        // because Multer 1.x ignores async-returning functions there (the
+        // previous implementation landed files in a non-existent path and
+        // every upload came back as a 500 ENOENT).
+        const storage = multer.diskStorage({
+            destination: uploadDir,
             filename: (req, file, cb) => {
                 const sanitizedName = (file.originalname || 'image').replace(/[^a-zA-Z0-9.-]/g, '_');
                 cb(null, sanitizedName);
@@ -1280,25 +1327,14 @@ app.post('/api/projects/:projectId/upload-images', authenticateToken, async (req
         });
 
         const fileFilter = (req, file, cb) => {
-            if (ALLOWED_IMAGE_MIMES.has(file.mimetype)) {
-                cb(null, true);
-                return;
-            }
-            // Last-chance sniff: read the first 4 KB of the temp file to detect
-            // the actual format. Multer invokes fileFilter before persisting
-            // the full file, so we sniff from the in-memory buffer when available.
-            try {
-                const buf = (file.buffer && file.buffer.length > 0) ? file.buffer : null;
-                const sniffed = buf ? sniffImageMime(buf) : null;
-                if (sniffed) {
-                    file.mimetype = sniffed; // canonicalize so the response uses the real type
-                    cb(null, true);
-                    return;
-                }
-            } catch (err) {
-                console.warn(`${logTag} mime sniff failed for ${file.originalname}:`, err.message);
-            }
-            cb(new Error(`Invalid file type "${file.mimetype}". Allowed: JPEG, PNG, GIF, WebP, SVG, AVIF, HEIC, BMP, TIFF.`));
+            // Accept everything and re-validate in the post-processor below,
+            // which reads the actual bytes from disk (diskStorage has no
+            // `file.buffer` — the previous sniff branch was a no-op for
+            // octet-stream uploads and caused them to 400 instantly). Browsers
+            // routinely send `application/octet-stream` for screenshots in
+            // formats the OS doesn't recognize (HEIC, AVIF), so we only trust
+            // magic-byte sniffing once the full file is on disk.
+            cb(null, true);
         };
 
         const upload = multer({
@@ -1330,23 +1366,39 @@ app.post('/api/projects/:projectId/upload-images', authenticateToken, async (req
             }
 
             try {
-                // Process uploaded images
-                const processedImages = await Promise.all(
+                // Process uploaded images. Use `allSettled` so one corrupt file
+                // (unreadable or unknown format) doesn't reject the whole batch
+                // — bad files are surfaced as entries with `error` so the UI
+                // can render a per-image message.
+                const settled = await Promise.allSettled(
                     req.files.map(async (file) => {
-                        // Read file and convert to base64
                         const buffer = await fs.readFile(file.path);
-                        // Canonicalize the mimetype: if the client sent
-                        // octet-stream or anything we couldn't trust, re-sniff
-                        // from the on-disk buffer so the data: URL the UI shows
-                        // actually matches what the image really is.
                         let mimeType = file.mimetype;
-                        if (!mimeType.startsWith('image/') || mimeType === 'application/octet-stream' || mimeType === 'binary/octet-stream') {
+                        if (
+                            !mimeType
+                            || mimeType === 'application/octet-stream'
+                            || mimeType === 'binary/octet-stream'
+                            || !mimeType.startsWith('image/')
+                        ) {
                             const sniffed = sniffImageMime(buffer);
-                            if (sniffed) mimeType = sniffed;
+                            if (sniffed) {
+                                mimeType = sniffed;
+                            } else {
+                                // Don't delete the file on rejection — the user
+                                // can recover it from the project directory even
+                                // if the format was unrecognized.
+                                throw new Error(
+                                    `Unsupported image format for "${file.originalname}" (browser sent "${file.mimetype || 'unknown'}"). Try JPEG, PNG, GIF, WebP, SVG, AVIF, HEIC, BMP or TIFF.`,
+                                );
+                            }
                         }
 
-                        // Clean up temp file immediately
-                        await fs.unlink(file.path).catch(() => { });
+                        // NOTE: do NOT unlink `file.path` here. The file must
+                        // persist in `<project>/.tmp/uploads/<timestamp>/<name>`
+                        // so the user can see it in the file tree and re-use it
+                        // across sessions. The endpoint still returns the
+                        // base64 inline so the composer can preview + attach
+                        // it to the message immediately.
 
                         return {
                             name: file.originalname,
@@ -1357,11 +1409,29 @@ app.post('/api/projects/:projectId/upload-images', authenticateToken, async (req
                     })
                 );
 
-                res.json({ images: processedImages });
+                const images = [];
+                const errors = [];
+                settled.forEach((result, index) => {
+                    if (result.status === 'fulfilled') {
+                        images.push(result.value);
+                    } else {
+                        errors.push({
+                            name: req.files[index]?.originalname || `file-${index}`,
+                            error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+                        });
+                    }
+                });
+
+                if (images.length === 0) {
+                    // Even when no file could be processed we keep them on disk
+                    // so the user can recover from the project directory.
+                    return res.status(400).json({ error: 'No valid image files received.', errors });
+                }
+
+                res.json({ images, errors: errors.length > 0 ? errors : undefined });
             } catch (error) {
                 console.error(`${logTag} processing error:`, error);
-                // Clean up any remaining files
-                await Promise.all((req.files || []).map(f => fs.unlink(f.path).catch(() => { })));
+                // Keep uploaded files on disk for recovery — never unlink here.
                 res.status(500).json({ error: 'Failed to process images' });
             }
         });

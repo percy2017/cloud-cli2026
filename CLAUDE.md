@@ -62,6 +62,17 @@ Express + native WS (`ws`). Two layers:
 3. **`server/shared/`** and top-level **`shared/`** — types and provider interfaces shared with the frontend (`server/shared/interfaces.ts` defines `IProviderAuth`, `IProviderMcp`, `IProviderSkills`, `IProviderSessions`, `IProviderSessionSynchronizer`).
 4. **`server/modules/providers/README.md`** is the canonical guide for the provider contract — **read it before adding a new provider**.
 
+### Image upload pipeline (`POST /api/projects/:projectId/upload-images`)
+
+Endpoint: `server/index.js:1245+`. Accepts `multipart/form-data` with field name `images` (max 10 files, 20 MB each). Behavior contract:
+
+- **Resolves the project root via `projectsDb.getProjectPathById()`** (synchronous — `better-sqlite3` does NOT return a Promise; do NOT chain `.catch()` on this call, that was a regression that caused 500s).
+- **Orphan-project recovery**: when the `projectId` from the URL is not in the DB (frontend can synthesize a projectId from the Claude SDK's `/root/.claude/projects/-<basename>/…` discovery), the endpoint auto-registers it via `projectsDb.createProjectPath(...)`, preferring (in order) the request headers `X-Project-Path` / `X-Project-Name`, then the most-recent session's `project_path`, then `WORKSPACES_ROOT` or `os.homedir()` as fallback. The recovery emits a `console.warn` line tagged `[upload-images]`.
+- **Multer storage** is `diskStorage` with a synchronous `destination: string` (Multer 1.x ignores async-returning functions there — that was the original cause of 500s). The directory `<projectRoot>/.tmp/uploads/<Date.now()>/` is pre-created with `fs.mkdir({ recursive: true })` BEFORE multer is invoked so the path always exists when multer tries to write.
+- **`fileFilter` accepts everything** (`cb(null, true)`). Re-validation happens in the post-processor by reading bytes from disk and running `sniffImageMime(buffer)`, which understands PNG/JPEG/GIF/WEBP/BMP/TIFF/HEIC/SVG via magic-byte detection. Browsers routinely send `application/octet-stream` for screenshots in formats the OS doesn't recognize, so we never trust the incoming mimetype alone.
+- **Files are NEVER deleted** by this endpoint — neither on success, nor on mimetype rejection, nor on processing error. The user must be able to recover every uploaded file from the project directory. The composer still receives the base64 inline (`data:<mime>;base64,…`) so it can preview + attach immediately.
+- **Per-file error reporting**: `Promise.allSettled` is used so a single bad file surfaces as `{ name, error }` in the response without rejecting the batch. If zero files succeed → `400 No valid image files received.`; otherwise `200 { images, errors? }`.
+
 ### Provider facet model
 
 Every provider is a thin wrapper exposing five readonly facets: `auth`, `mcp`, `skills`, `sessions`, `sessionSynchronizer`. Provider ids currently shipped: `claude`, `codex`, `cursor`, `gemini`, `opencode`, `qwen`. MiniMax is a configuration layer rather than a provider.
@@ -73,19 +84,42 @@ Consuming services (`providerAuthService`, `providerMcpService`, `providerSkills
 - be wired in `server/routes/agent.js` if launchable from the chat composer,
 - be added to `PROVIDER_ORDER` in `public/api-docs.html` and the UI lists (`useChatProviderState.ts`, `ProviderSelectionEmptyState.tsx`, `ProviderLoginModal.tsx`).
 
+### Per-provider model catalogs (operator-curated)
+
+Each provider's `*ProviderModels` in `server/modules/providers/list/<id>/` ships a hard-coded fallback list (`<PROVIDER>_FALLBACK_MODELS.OPTIONS` + `.DEFAULT`). The dynamic catalog is preferred when available (`~/.codex/models_cache.json` for codex, `~/.qwen/settings.json` for qwen, `cursor-agent --list-models` for cursor, `opencode models` for opencode). The current per-provider policy — **MiniMax-M3 is the default and primary model for every provider except claude** — is encoded in each fallback:
+
+| Provider | Fallback list | DEFAULT | Dynamic catalog |
+|---|---|---|---|
+| `claude` | 6 entries (`default`, `fable`, `sonnet`, `sonnet[1m]`, `opus[1m]`, `haiku`) | `default` | none |
+| `codex` | `MiniMax-M3` + `gpt-5.5`/`5.4`/`5.4-mini`/`5.3-codex`/`5.2` | `MiniMax-M3` | filtered to `gpt-5.*` slugs only when routed through stock OpenAI |
+| `cursor` | **empty** | `''` | unchanged — no operator-curated list |
+| `gemini` | 6 entries (gemini-3-flash-preview, etc.) | `gemini-3-flash-preview` | none |
+| `opencode` | `MiniMax-M3` first + 8 "free" entries (anthropic-3, openai-3, google-2) | `MiniMax-M3` | unfiltered |
+| `qwen` | **only `MiniMax-M3`** | `MiniMax-M3` | promoted only if `~/.qwen/settings.json#model.name` differs from `MiniMax-M3` |
+
+**Codex custom-provider handling**: when `~/.codex/config.toml` has `model_provider != "openai"` (e.g. `minimax`), the local `models_cache.json` is poisoned (it was populated against `api.openai.com`). `buildCodexModelsDefinition` ignores the cache entirely and uses `config.toml#model` as the only ground truth. With stock OpenAI routing, the dynamic catalog is filtered to slugs matching `gpt-5.*`.
+
+**Frontend `FALLBACK_DEFAULT_MODEL`** (`src/components/chat/hooks/useChatProviderState.ts:12-19`) mirrors the backend defaults: `claude: 'opus'`, `cursor: ''`, `codex: 'MiniMax-M3'`, `gemini: 'gemini-3.1-pro-preview'`, `opencode: 'MiniMax-M3'`, `qwen: 'MiniMax-M3'`. The frontend fallback only matters on first paint (before `/api/providers/<id>/models` resolves).
+
 Capabilities & permission modes per provider (UI matrix) live in `docs/providers/agente.md`. Per-provider docs: `claude.md`, `codex.md`, `cursor.md`, `gemini.md`, `opencode.md`, `qwen.md`.
 
 ### WebSocket topology
 
 The server mounts several WS endpoints — all proxied by Vite in dev (`/ws`, `/shell`, `/plugin-ws`) and served from the Express port in prod:
 
-- `/ws` — chat streaming (per-session).
+- `/ws` — chat streaming (per-session). Implementation: `server/modules/websocket/services/chat-websocket.service.ts`. Uses a `protocol_ack` / `protocol_error` envelope pattern — see the abort idempotency note below.
 - `/shell` — PTY shells (Node `ws` + `node-pty`).
 - `/plugin-ws` — internal plugin IPC.
 
+**Chat protocol notes**: the abort path (`handleChatAbort`) is idempotent. When a user clicks "stop" on a session that has already finished, the server replies `protocol_ack { aborted: false, reason: 'no_active_run' }` rather than emitting `protocol_error NO_ACTIVE_RUN`. The UI must treat that ack as a benign no-op, not as a failure to surface.
+
 ### Voice
 
-Voice (push-to-talk, read-aloud) is a thin HTTP proxy, not a provider. STT/TTS point at any OpenAI-compatible backend (OpenAI, Groq, LocalAI, Speaches, Kokoro-FastAPI, etc.). Architecture and the two modes (direct vs. `/api/voice/*` proxy) are documented in `docs/voice.md`.
+Voice (push-to-talk, read-aloud) is a thin HTTP proxy, not a provider. STT/TTS point at any OpenAI-compatible backend (OpenAI, Groq, LocalAI, Speaches, Kokoro-FastAPI, etc.). Architecture and the two modes (direct vs. `/api/voice/*` proxy) are documented in `docs/voice.md`. The Voice settings tab (`src/components/settings/view/tabs/VoiceSettingsTab.tsx`) ships a curated list of 45 Spanish-language voices plus an English group; the list lives in `src/components/settings/view/tabs/minimax-voices.ts` (`MINIMAX_VOICE_GROUPS`) — keep new voices there, not hard-coded inside the tab component.
+
+### i18n
+
+Default locale is `es`. Translation bundles live in `src/i18n/locales/{de,en,es,fr,it,ja,ko,ru,tr,zh-CN,zh-TW}/`. Provider-picker strings (`Choose a model`, `Search models…`, `No models found`) live under the `providerSelection` key in `chat.json` for both `es` and `en`; the picker (`ProviderSelectionEmptyState.tsx`) reads them via `t("providerSelection.chooseAModel")` etc. Never hard-code English strings inside picker components — always add a translation key.
 
 ### Desktop & binary
 
@@ -165,6 +199,11 @@ These are confirmed user/project rules that previously recurred; honour them whe
 - **Node 22 ABI alignment.** `.env#NODE_BINARY`, `ecosystem.config.cjs#exec_interpreter`, the shebang of `scripts/fix-*.js`, and `.nvmrc`/`package.json#engines.node` must all stay in sync. The `postinstall` (`scripts/fix-server-native-modules.js`) rebuilds natives against `.env#NODE_BINARY` regardless of which Node invoked npm, but the shebang pin prevents direct-script invocations from picking up Node 24.
 - **Native-module fix script.** `node scripts/fix-server-native-modules.js` is idempotent: when the binding already matches the target ABI it exits quickly. Use `--dry-run` to preview, `--target /path/to/node` to override auto-detection.
 - **Git panel UX** (`src/components/git-panel/`). Stabilise the panel with `useMemo` so it does not refetch on every `session_upserted`. Auto-prefix commit messages (don't make the user type a Conventional Commits scope). **Never silent-fail on commit error** — surface the failure (toast / inline error) and keep the editor's text intact so the user can retry.
+- **User uploads live forever in the project root.** Composer image uploads (`POST /api/projects/:projectId/upload-images`) land in `<projectRoot>/.tmp/uploads/<Date.now()>/<filename>` and **must never be deleted** by the endpoint — the user needs them to persist across sessions and be visible in the file tree. The two `.tmp/` siblings serve different purposes: `.tmp/uploads/` is operator-visible, persisted; `.tmp/images/` is SDK-internal (Claude / Gemini), auto-cleaned by the SDK via `cleanupTempFiles` after the model consumes them.
+- **Provider fallback models carry the operator's product policy.** The Spanish-voice catalog, the MiniMax-M3-first ordering for codex/opencode/qwen, the empty list for cursor, and the `gpt-5.*`-only filter for codex dynamic catalogs are deliberate operator decisions — change them in `<provider>-models.provider.ts`, not in the consuming UI code.
+- **WebSocket aborts must be idempotent.** `chat-websocket.service.ts#handleChatAbort` answers with `protocol_ack { aborted: false, reason: 'no_active_run' }` instead of `protocol_error NO_ACTIVE_RUN` when the session has already finished. The user clicks "stop" on a response that just completed; the UI must not surface that as a fatal error.
+- **`projectsDb.getProjectPathById()` is synchronous** (`better-sqlite3`, returns `string | null`). Other endpoints (`server/index.js` lines 486, 527, 594, 705, 823, 898, 972, 1097) `await` it for symmetry with async DB calls — that's fine, but **never chain `.catch()`** on it. That's not a Promise; doing so throws `TypeError: ... .catch is not a function` and aborts the whole endpoint with a 500.
+- **Multer 1.x does not support async `destination` functions.** Use `destination: string` and pre-create the directory with `fs.mkdir({ recursive: true })` before constructing multer. Async-returning destinations cause files to land in a non-existent path and every upload to 500 with `ENOENT`.
 
 ## Where to read more
 
