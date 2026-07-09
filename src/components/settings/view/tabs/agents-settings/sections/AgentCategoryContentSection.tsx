@@ -19,6 +19,8 @@ export default function AgentCategoryContentSection({
   onCodexPermissionModeChange,
   opencodePermissions,
   onOpencodePermissionsChange,
+  qwenPermissionMode,
+  onQwenPermissionModeChange,
   projects,
 }: AgentCategoryContentSectionProps) {
   return (
@@ -87,6 +89,17 @@ export default function AgentCategoryContentSection({
           onOpencodeAgentChange={(value) => onOpencodePermissionsChange({ ...opencodePermissions, agent: value })}
           autoApprove={opencodePermissions.autoApprove}
           onAutoApproveChange={(value) => onOpencodePermissionsChange({ ...opencodePermissions, autoApprove: value })}
+        />
+      )}
+
+      {selectedCategory === 'permissions' && selectedAgent === 'qwen' && (
+        // Qwen 0.19.x CLI accepts 4 modes via --approval-mode: default (none),
+        // plan (read-only), auto-edit (auto-approve edits), yolo (auto-approve
+        // everything, equivalent to bypassPermissions). See docs/providers/qwen.md.
+        <PermissionsContent
+          agent="qwen"
+          permissionMode={qwenPermissionMode}
+          onPermissionModeChange={onQwenPermissionModeChange}
         />
       )}
 

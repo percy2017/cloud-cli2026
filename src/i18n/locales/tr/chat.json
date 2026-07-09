@@ -18,7 +18,8 @@
     "claude": "Claude",
     "cursor": "Cursor",
     "codex": "Codex",
-    "gemini": "Gemini"
+    "gemini": "Gemini",
+    "qwen": "Qwen"
   },
   "tools": {
     "settings": "Araç Ayarları",
@@ -92,7 +93,8 @@
       "auto": "Auto Mode",
       "acceptEdits": "Düzenlemeleri Kabul Et",
       "bypassPermissions": "İzinleri Atla",
-      "plan": "Plan Modu"
+      "plan": "Plan Modu",
+      "autoEdit": "Auto-edit"
     },
     "descriptions": {
       "default": "Sadece güvenilir komutlar (ls, cat, grep, git status, vb.) otomatik çalışır. Diğer komutlar atlanır. Çalışma alanına yazabilir.",
@@ -153,7 +155,8 @@
       "cursor": "Cursor'ı {{model}} ile kullanmaya hazır. Mesajını aşağıya yazmaya başla.",
       "codex": "Codex'i {{model}} ile kullanmaya hazır. Mesajını aşağıya yazmaya başla.",
       "gemini": "Gemini'yi {{model}} ile kullanmaya hazır. Mesajını aşağıya yazmaya başla.",
-      "default": "Başlamak için yukarıdan bir sağlayıcı seç"
+      "default": "Başlamak için yukarıdan bir sağlayıcı seç",
+      "qwen": "Ready to use Qwen with {{model}}. Start typing your message below."
     },
     "pressToSearch": "Oturumlarda, dosyalarda ve commit'lerde arama yapmak için <kbd>{{shortcut}}</kbd> tuşlarına bas"
   },

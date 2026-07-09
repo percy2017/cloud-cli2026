@@ -1,7 +1,7 @@
 // Service Worker for CloudCLI PWA
 // Cache only manifest (needed for PWA install). HTML and JS are never pre-cached
 // so a rebuild + refresh always picks up the latest assets.
-const CACHE_NAME = 'claude-ui-v2';
+const CACHE_NAME = 'claude-ui-v5';
 const urlsToCache = [
   '/manifest.json'
 ];
@@ -57,18 +57,20 @@ self.addEventListener('fetch', event => {
   );
 });
 
-// Activate event — purge old caches
+// Activate event — purge old caches and take control of all open clients immediately
 self.addEventListener('activate', event => {
   event.waitUntil(
-    caches.keys().then(cacheNames =>
-      Promise.all(
-        cacheNames
-          .filter(name => name !== CACHE_NAME)
-          .map(name => caches.delete(name))
-      )
-    )
+    Promise.all([
+      caches.keys().then(cacheNames =>
+        Promise.all(
+          cacheNames
+            .filter(name => name !== CACHE_NAME)
+            .map(name => caches.delete(name))
+        )
+      ),
+      self.clients.claim()
+    ])
   );
-  self.clients.claim();
 });
 
 // Push notification event

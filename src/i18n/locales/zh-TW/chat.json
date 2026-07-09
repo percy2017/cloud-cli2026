@@ -18,7 +18,8 @@
     "claude": "Claude",
     "cursor": "Cursor",
     "codex": "Codex",
-    "gemini": "Gemini"
+    "gemini": "Gemini",
+    "qwen": "Qwen"
   },
   "tools": {
     "settings": "工具設定",
@@ -92,7 +93,8 @@
       "auto": "自動模式",
       "acceptEdits": "編輯模式",
       "bypassPermissions": "無限制模式",
-      "plan": "計畫模式"
+      "plan": "計畫模式",
+      "autoEdit": "Auto-edit"
     },
     "descriptions": {
       "default": "只有受信任的指令（ls、cat、grep、git status 等）自動執行。其他指令將被略過。可以寫入工作區。",
@@ -171,7 +173,8 @@
       "cursor": "準備好使用 {{model}} 的 Cursor。請在下方開始輸入您的訊息。",
       "codex": "準備好使用 {{model}} 的 Codex。請在下方開始輸入您的訊息。",
       "gemini": "準備好使用 {{model}} 的 Gemini。請在下方開始輸入您的訊息。",
-      "default": "請在上方選擇一個提供者以開始"
+      "default": "請在上方選擇一個提供者以開始",
+      "qwen": "Ready to use Qwen with {{model}}. Start typing your message below."
     },
     "pressToSearch": "按 <kbd>{{shortcut}}</kbd> 搜尋工作階段、檔案和提交"
   },

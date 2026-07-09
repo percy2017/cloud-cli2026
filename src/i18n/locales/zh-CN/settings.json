@@ -327,6 +327,9 @@
       },
       "gemini": {
         "description": "Google Gemini AI 助手"
+      },
+      "qwen": {
+        "description": "Alibaba Qwen Code CLI assistant"
       }
     },
     "connectionStatus": "连接状态",
@@ -338,7 +341,13 @@
       "button": "登录",
       "reLoginButton": "重新登录"
     },
-    "error": "错误：{{error}}"
+    "error": "错误：{{error}}",
+    "manualSetup": {
+      "title": "Configure Qwen manually",
+      "description": "Qwen 0.19.x has no `qwen auth` command. Set the API key directly in your shell:",
+      "settingsPath": "Or edit the file:",
+      "envHint": "Recognised env vars: OPENAI_API_KEY, ANTHROPIC_API_KEY, QWEN_API_KEY, DASHSCOPE_API_KEY"
+    }
   },
   "permissions": {
     "title": "权限设置",
@@ -440,6 +449,35 @@
     },
     "actions": {
       "add": "添加"
+    },
+    "qwen": {
+      "permissionMode": "Permission mode",
+      "description": "Qwen 0.19.x supports four approval modes, passed to the CLI via --approval-mode. The change takes effect on the next message you send.",
+      "modes": {
+        "default": {
+          "title": "Default",
+          "description": "Qwen asks for confirmation before each tool call. Equivalent to not passing --approval-mode."
+        },
+        "plan": {
+          "title": "Plan",
+          "description": "Read-only mode: Qwen analyses the code and proposes a plan, but never executes tools that mutate state."
+        },
+        "autoEdit": {
+          "title": "Auto-edit",
+          "description": "Auto-approves file edits (write/edit), but asks for confirmation on shell commands."
+        },
+        "yolo": {
+          "title": "YOLO",
+          "description": "Auto-approves any tool call without confirmation. Dangerous: only run on trusted projects."
+        }
+      },
+      "technicalDetails": "Technical details",
+      "technicalInfo": {
+        "default": "Qwen runs without --approval-mode. The user approves each tool call interactively.",
+        "plan": "Qwen runs with --approval-mode plan. Useful for exploring without risk of mutating files.",
+        "autoEdit": "Qwen runs with --approval-mode auto-edit. File edits pass without confirmation.",
+        "yolo": "Qwen runs with --approval-mode yolo (or --yolo). All tools execute without permission prompts."
+      }
     }
   },
   "mcpServers": {
@@ -447,7 +485,8 @@
     "description": {
       "claude": "Model Context Protocol 服务器为 Claude 提供额外的工具和数据源",
       "cursor": "Model Context Protocol 服务器为 Cursor 提供额外的工具和数据源",
-      "codex": "Model Context Protocol 服务器为 Codex 提供额外的工具和数据源"
+      "codex": "Model Context Protocol 服务器为 Codex 提供额外的工具和数据源",
+      "qwen": "Model Context Protocol servers provide additional tools and data sources to Qwen"
     },
     "addButton": "添加 MCP 服务器",
     "empty": "未配置 MCP 服务器",
@@ -537,6 +576,46 @@
         "speech": "Speech",
         "music": "Music"
       }
+    }
+  },
+  "onboarding": {
+    "agents": {
+      "providerTitles": {
+        "qwen": "Qwen Code"
+      }
+    }
+  },
+  "voiceSettings": {
+    "title": "Voice",
+    "description": "Speech-to-text input and read-aloud, via an OpenAI-compatible audio backend.",
+    "enable": "Enable voice",
+    "enableDescription": "Show the mic button and the read-aloud button on messages.",
+    "minimaxTtsTitle": "MiniMax TTS",
+    "minimaxTtsDescription": "Route the read-aloud endpoint through the MiniMax TTS API (mmx speech synthesize). STT is unaffected.",
+    "minimaxTtsEnable": "Use MiniMax for text-to-speech",
+    "minimaxTtsEnableDescription": "When on, the read-aloud button synthesises audio via MiniMax. Requires MiniMax to be enabled in Settings → MiniMax.",
+    "minimaxTtsVoice": "Voice override",
+    "minimaxTtsNote": "Empty means use the voice configured in Settings → MiniMax. Requires an mmx CLI on the server PATH.",
+    "ttsAutoPlayTitle": "Auto-play the last response",
+    "ttsAutoPlayDescription": "When a new assistant message arrives, read it aloud automatically. Tap the 🔊 button on the message to stop it."
+  },
+  "api": {
+    "minimax": {
+      "title": "MiniMax",
+      "description": "Reads API credentials from the `mmx` CLI installed on the server. The UI shows the current status only — manage the key with `mmx auth login`.",
+      "loading": "Loading…",
+      "refresh": "Refresh",
+      "statusAuthenticated": "mmx is authenticated",
+      "statusNotAuthenticated": "mmx is not authenticated",
+      "methodLabel": "Auth method",
+      "methodApiKey": "API key",
+      "methodOAuth": "OAuth",
+      "keyLabel": "API key",
+      "hostLabel": "API host",
+      "setupTitle": "Set up mmx on the server",
+      "setupDescription": "Run these commands in the server's terminal, then click Refresh.",
+      "installLabel": "Install mmx",
+      "loginLabel": "Log in"
     }
   }
 }

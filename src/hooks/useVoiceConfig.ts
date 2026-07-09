@@ -1,17 +1,29 @@
 import { useState } from 'react';
 
 export type VoiceConfig = {
-  baseUrl: string;
-  apiKey: string;
-  sttModel: string;
-  ttsModel: string;
-  ttsVoice: string;
-  ttsFormat: string;
+  // When true, the TTS request is routed through the MiniMax TTS backend
+  // (server-side `mmx speech synthesize`) instead of an OpenAI-compatible
+  // backend. CloudCLI ships with MiniMax only — no other voice backend.
+  ttsUseMinimax: boolean;
+  // Optional voice override for the MiniMax TTS branch. Empty means
+  // "use whatever the user picked in Settings -> MiniMax". Surfaced in
+  // `x-voice-tts-minimax-voice`.
+  ttsMinimaxVoice: string;
+  // When true, every assistant response (the final message of a successful
+  // run) is read aloud automatically as soon as the run completes. The user
+  // can still cancel by tapping the 🔊 button on the message or the global
+  // stop control. Persisted alongside the other voice prefs in localStorage
+  // so the choice survives reloads and is shared across browser tabs.
+  ttsAutoPlay: boolean;
 };
 
 const STORAGE_KEY = 'voiceConfig';
 export const VOICE_CONFIG_SYNC_EVENT = 'voice-config:sync';
-const DEFAULTS: VoiceConfig = { baseUrl: '', apiKey: '', sttModel: '', ttsModel: '', ttsVoice: '', ttsFormat: '' };
+const DEFAULTS: VoiceConfig = {
+  ttsUseMinimax: false,
+  ttsMinimaxVoice: '',
+  ttsAutoPlay: false,
+};
 
 export function readVoiceConfig(): VoiceConfig {
   try {
@@ -20,26 +32,24 @@ export function readVoiceConfig(): VoiceConfig {
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { ...DEFAULTS };
     const config = { ...DEFAULTS };
-    for (const key of Object.keys(DEFAULTS) as (keyof VoiceConfig)[]) {
-      if (typeof parsed[key] === 'string') config[key] = parsed[key];
-    }
+    if (parsed.ttsUseMinimax === true) config.ttsUseMinimax = true;
+    if (typeof parsed.ttsMinimaxVoice === 'string') config.ttsMinimaxVoice = parsed.ttsMinimaxVoice;
+    if (parsed.ttsAutoPlay === true) config.ttsAutoPlay = true;
     return config;
   } catch {
     return { ...DEFAULTS };
   }
 }
 
-// Headers the voice proxy reads to target a per-user OpenAI-compatible backend.
-// Empty fields are omitted so the server's env defaults apply.
+// Headers the voice proxy reads to know whether to route TTS through MiniMax.
+// STT is currently disabled at the proxy level (no backend wired) so no
+// transcription headers are sent.
 export function voiceConfigHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
   const c = readVoiceConfig();
   const h: Record<string, string> = {};
-  if (c.apiKey) h['x-voice-api-key'] = c.apiKey;
-  if (c.sttModel) h['x-voice-stt-model'] = c.sttModel;
-  if (c.ttsModel) h['x-voice-tts-model'] = c.ttsModel;
-  if (c.ttsVoice) h['x-voice-tts-voice'] = c.ttsVoice;
-  if (c.ttsFormat.trim()) h['x-voice-tts-format'] = c.ttsFormat.trim();
+  if (c.ttsUseMinimax) h['x-voice-tts-minimax'] = '1';
+  if (c.ttsMinimaxVoice.trim()) h['x-voice-tts-minimax-voice'] = c.ttsMinimaxVoice.trim();
   return h;
 }
 
@@ -53,8 +63,7 @@ export function useVoiceConfig() {
       const next = { ...prev, ...patch };
       try {
         const stored: Partial<VoiceConfig> = { ...next };
-        if (next.ttsFormat.trim()) stored.ttsFormat = next.ttsFormat.trim();
-        else delete stored.ttsFormat;
+        if (!next.ttsMinimaxVoice.trim()) delete stored.ttsMinimaxVoice;
         localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
         window.dispatchEvent(new Event(VOICE_CONFIG_SYNC_EVENT));
       } catch {

@@ -10,6 +10,7 @@ import { spawnCursor } from '../cursor-cli.js';
 import { queryCodex } from '../openai-codex.js';
 import { spawnGemini } from '../gemini-cli.js';
 import { spawnOpenCode } from '../opencode-cli.js';
+import { spawnQwen } from '../qwen-cli.js';
 import { Octokit } from '@octokit/rest';
 import { providerModelsService } from '../modules/providers/services/provider-models.service.js';
 import { IS_PLATFORM } from '../constants/config.js';
@@ -862,8 +863,8 @@ router.post('/', validateExternalApiKey, async (req, res) => {
     return res.status(400).json({ error: 'message is required' });
   }
 
-  if (!['claude', 'cursor', 'codex', 'gemini', 'opencode'].includes(provider)) {
-    return res.status(400).json({ error: 'provider must be "claude", "cursor", "codex", "gemini", or "opencode"' });
+  if (!['claude', 'cursor', 'codex', 'gemini', 'opencode', 'qwen'].includes(provider)) {
+    return res.status(400).json({ error: 'provider must be "claude", "cursor", "codex", "gemini", "opencode", or "qwen"' });
   }
 
   // Validate GitHub branch/PR creation requirements
@@ -944,6 +945,22 @@ router.post('/', validateExternalApiKey, async (req, res) => {
     const codexModels = (await providerModelsService.getProviderModels('codex')).models;
     const geminiModels = (await providerModelsService.getProviderModels('gemini')).models;
     const opencodeModels = (await providerModelsService.getProviderModels('opencode')).models;
+    const qwenModels = (await providerModelsService.getProviderModels('qwen')).models;
+
+    // Defensive: if the request model is stale (localStorage carries an old
+    // value that the current upstream no longer recognises — e.g. `gpt-5.5`
+    // when the user is talking to a third-party proxy via `model_provider`),
+    // the CLI returns 2013 `invalid params, unknown model ...` and aborts the
+    // run. Fall back to the provider's DEFAULT whenever the requested model
+    // is not present in the current catalog. The catalog is dynamic; this
+    // doesn't catch every future incompatibility, but it does cover the
+    // common case of a stale localStorage.
+    const resolveModel = (requested, def) => {
+      if (!requested) return def.DEFAULT;
+      if (def.OPTIONS.some((opt) => opt.value === requested)) return requested;
+      return def.DEFAULT;
+    };
+    const codexModel = resolveModel(model, codexModels);
 
     // Start the appropriate session
     if (provider === 'claude') {
@@ -974,7 +991,7 @@ router.post('/', validateExternalApiKey, async (req, res) => {
         projectPath: finalProjectPath,
         cwd: finalProjectPath,
         sessionId: sessionId || null,
-        model: model || codexModels.DEFAULT,
+        model: codexModel,
         permissionMode: 'bypassPermissions'
       }, writer);
     } else if (provider === 'gemini') {
@@ -995,6 +1012,16 @@ router.post('/', validateExternalApiKey, async (req, res) => {
         cwd: finalProjectPath,
         sessionId: sessionId || null,
         model: model || opencodeModels.DEFAULT
+      }, writer);
+    } else if (provider === 'qwen') {
+      console.log('Starting Qwen CLI session');
+
+      await spawnQwen(message.trim(), {
+        projectPath: finalProjectPath,
+        cwd: finalProjectPath,
+        sessionId: sessionId || null,
+        model: resolveModel(model, qwenModels),
+        permissionMode: 'bypassPermissions'
       }, writer);
     }
 

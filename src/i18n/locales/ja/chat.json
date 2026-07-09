@@ -17,7 +17,8 @@
     "tool": "ツール",
     "claude": "Claude",
     "cursor": "Cursor",
-    "codex": "Codex"
+    "codex": "Codex",
+    "qwen": "Qwen"
   },
   "tools": {
     "settings": "ツール設定",
@@ -91,7 +92,8 @@
       "auto": "Auto Mode",
       "acceptEdits": "編集を許可",
       "bypassPermissions": "権限をバイパス",
-      "plan": "プランモード"
+      "plan": "プランモード",
+      "autoEdit": "Auto-edit"
     },
     "descriptions": {
       "default": "信頼されたコマンド（ls、cat、grep、git statusなど）のみ自動実行。その他のコマンドはスキップ。ワークスペースへの書き込みは可能。",
@@ -130,7 +132,8 @@
       "claude": "{{model}}でClaudeを使用する準備ができました。下にメッセージを入力してください。",
       "cursor": "{{model}}でCursorを使用する準備ができました。下にメッセージを入力してください。",
       "codex": "{{model}}でCodexを使用する準備ができました。下にメッセージを入力してください。",
-      "default": "上からプロバイダーを選択して開始してください"
+      "default": "上からプロバイダーを選択して開始してください",
+      "qwen": "Ready to use Qwen with {{model}}. Start typing your message below."
     },
     "pressToSearch": "<kbd>{{shortcut}}</kbd> を押してセッション、ファイル、コミットを検索"
   },

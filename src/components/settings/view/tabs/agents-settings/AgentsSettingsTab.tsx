@@ -20,6 +20,8 @@ export default function AgentsSettingsTab({
   onGeminiPermissionModeChange,
   opencodePermissions,
   onOpencodePermissionsChange,
+  qwenPermissionMode,
+  onQwenPermissionModeChange,
   projects,
 }: AgentsSettingsTabProps) {
   const [selectedAgent, setSelectedAgent] = useState<AgentProvider>('claude');
@@ -34,7 +36,7 @@ export default function AgentsSettingsTab({
   );
 
   const visibleAgents = useMemo<AgentProvider[]>(() => {
-    return ['claude', 'cursor', 'codex', 'gemini', 'opencode'];
+    return ['claude', 'cursor', 'codex', 'gemini', 'opencode', 'qwen'];
   }, []);
 
   const agentContextById = useMemo<Record<AgentProvider, AgentContext>>(() => ({
@@ -58,6 +60,10 @@ export default function AgentsSettingsTab({
       authStatus: providerAuthStatus.opencode,
       onLogin: () => onProviderLogin('opencode'),
     },
+    qwen: {
+      authStatus: providerAuthStatus.qwen,
+      onLogin: () => onProviderLogin('qwen'),
+    },
   }), [
     onProviderLogin,
     providerAuthStatus.claude,
@@ -65,6 +71,7 @@ export default function AgentsSettingsTab({
     providerAuthStatus.cursor,
     providerAuthStatus.gemini,
     providerAuthStatus.opencode,
+    providerAuthStatus.qwen,
   ]);
 
   useEffect(() => {
@@ -104,6 +111,8 @@ export default function AgentsSettingsTab({
           onGeminiPermissionModeChange={onGeminiPermissionModeChange}
           opencodePermissions={opencodePermissions}
           onOpencodePermissionsChange={onOpencodePermissionsChange}
+          qwenPermissionMode={qwenPermissionMode}
+          onQwenPermissionModeChange={onQwenPermissionModeChange}
           projects={projects}
         />
       </div>

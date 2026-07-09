@@ -10,6 +10,7 @@ import type { ChatInterfaceProps, Provider  } from '../types/types';
 import { useChatProviderState } from '../hooks/useChatProviderState';
 import { useChatSessionState } from '../hooks/useChatSessionState';
 import { useChatRealtimeHandlers } from '../hooks/useChatRealtimeHandlers';
+import { useAutoPlayLastMessage } from '../hooks/useAutoPlayLastMessage';
 import { useChatComposerState } from '../hooks/useChatComposerState';
 import { useSessionStore } from '../../../stores/useSessionStore';
 
@@ -74,6 +75,8 @@ function ChatInterface({
     setGeminiModel,
     opencodeModel,
     setOpenCodeModel,
+    qwenModel,
+    setQwenModel,
     permissionMode,
     pendingPermissionRequests,
     setPendingPermissionRequests,
@@ -199,6 +202,7 @@ function ChatInterface({
     codexModel,
     geminiModel,
     opencodeModel,
+    qwenModel,
     isLoading: isProcessing,
     canAbortSession,
     tokenBudget,
@@ -249,6 +253,12 @@ function ChatInterface({
     onWebSocketReconnect: handleWebSocketReconnect,
     sessionStore,
   });
+
+  // When the "Auto-play the last response" toggle is on, read the new
+  // assistant message aloud as soon as it lands. Polls the session store
+  // rather than wiring into useChatRealtimeHandlers so the realtime handler
+  // stays a pure reducer over WS events.
+  useAutoPlayLastMessage(sessionStore, currentSessionId || selectedSession?.id || null);
 
   useEffect(() => {
     if (!canAbortSession) {
@@ -332,6 +342,8 @@ function ChatInterface({
           setGeminiModel={setGeminiModel}
           opencodeModel={opencodeModel}
           setOpenCodeModel={setOpenCodeModel}
+          qwenModel={qwenModel}
+          setQwenModel={setQwenModel}
           providerModelCatalog={providerModelCatalog}
           providerModelsLoading={providerModelsLoading}
           tasksEnabled={tasksEnabled}
@@ -435,7 +447,9 @@ function ChatInterface({
                     ? t('messageTypes.gemini')
                     : provider === 'opencode'
                       ? t('messageTypes.opencode', { defaultValue: 'OpenCode' })
-                    : t('messageTypes.claude'),
+                      : provider === 'qwen'
+                        ? t('messageTypes.qwen', { defaultValue: 'Qwen' })
+                        : t('messageTypes.claude'),
           })}
           isTextareaExpanded={isTextareaExpanded}
           sendByCtrlEnter={sendByCtrlEnter}

@@ -18,7 +18,8 @@
     "claude": "Claude",
     "cursor": "Cursor",
     "codex": "Codex",
-    "gemini": "Gemini"
+    "gemini": "Gemini",
+    "qwen": "Qwen"
   },
   "tools": {
     "settings": "Impostazioni strumento",
@@ -92,7 +93,8 @@
       "auto": "Auto Mode",
       "acceptEdits": "Accetta modifiche",
       "bypassPermissions": "Ignora permessi",
-      "plan": "Modalità piano"
+      "plan": "Modalità piano",
+      "autoEdit": "Auto-edit"
     },
     "descriptions": {
       "default": "Solo i comandi attendibili (ls, cat, grep, git status, ecc.) vengono eseguiti automaticamente. Gli altri comandi vengono saltati. Può scrivere nell'area di lavoro.",
@@ -153,7 +155,8 @@
       "cursor": "Pronto a usare Cursor con {{model}}. Inizia a digitare il tuo messaggio qui sotto.",
       "codex": "Pronto a usare Codex con {{model}}. Inizia a digitare il tuo messaggio qui sotto.",
       "gemini": "Pronto a usare Gemini con {{model}}. Inizia a digitare il tuo messaggio qui sotto.",
-      "default": "Seleziona un provider sopra per iniziare"
+      "default": "Seleziona un provider sopra per iniziare",
+      "qwen": "Ready to use Qwen with {{model}}. Start typing your message below."
     },
     "pressToSearch": "Premi <kbd>{{shortcut}}</kbd> per cercare sessioni, file e commit"
   },

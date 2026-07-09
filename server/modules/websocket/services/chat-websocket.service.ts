@@ -171,14 +171,14 @@ async function handleChatSend(
     await spawnFn(command, runtimeOptions, run.writer);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    // The OpenCode CLI child process gets killed whenever PM2 restarts the
+    // The OpenCode/Qwen CLI child process gets killed whenever PM2 restarts the
     // Node parent (e.g. after a deploy or a config reload), which surfaces as
-    // "OpenCode CLI process was terminated". That's expected during a
+    // "OpenCode/Qwen CLI process was terminated". That's expected during a
     // graceful restart, not a real failure — demote to warn so it doesn't
     // pollute the error log. Any other provider error stays at error level.
-    const isOpenCodeTerminated = provider === 'opencode'
+    const isSubprocessTerminated = (provider === 'opencode' || provider === 'qwen')
       && /process was terminated/i.test(message);
-    if (isOpenCodeTerminated) {
+    if (isSubprocessTerminated) {
       console.warn(`[Chat] Provider runtime "${provider}" terminated (likely server restart)`, { sessionId });
     } else {
       console.error(`[Chat] Provider runtime "${provider}" failed`, { sessionId, error: message });

@@ -1,10 +1,11 @@
 # Qwen Code provider
 
-> **Status: DRAFT — not yet integrated.** This document is the integration plan
-> for adding [Qwen Code][qwen-code] as the 6th provider of CloudCLI. See
-> [section 11 — Implementation roadmap](#11-implementation-roadmap) for the
-> sequenced step-by-step and [section 13](#13-open-questions) for the gate
-> questions that block implementation.
+> **Status: IMPLEMENTED.** Qwen Code (`@qwen-code/qwen-code`) is the 6th
+> production provider of CloudCLI, wired in across the type unions, provider
+> registry, capability matrix, spawner, sessions synchronizer, and the full UI
+> surface (sidebar, chat composer, MCP, Skills, Settings → Agents, Settings →
+> Permissions). See [section 2](#2-status) for what shipped and which follow-ups
+> remain.
 
 This document explains how CloudCLI integrates [Qwen Code][qwen-code] as one of
 its AI coding agents. Qwen Code is an open-source CLI by Alibaba (Apache-2.0),
@@ -18,18 +19,71 @@ This doc assumes you already know the facet model and zooms in on how **qwen**
 implements each one.
 
 For the **shared UI surface** (Header tabs, Sidebar, Settings → Agents shared
-chrome) that's identical across all five production providers, see
+chrome) that's identical across all six production providers, see
 [`docs/providers/claude.md` → "UI integration"](./claude.md#ui-integration).
 This doc zooms in on the qwen-specific **deltas** from that baseline.
 
 [qwen-code]: https://github.com/QwenLM/qwen-code
 
-## 1. Status
+## 1. Quick reference
 
-DRAFT — not yet integrated. Six facets to implement + ~40 frontend touch points
-across 12 phases. See [section 11](#11-implementation-roadmap).
+| Concern | Value |
+|---|---|
+| Provider id | `'qwen'` |
+| Binary | `qwen` (npm `@qwen-code/qwen-code`) |
+| Engines | `node >=22.0.0` (CloudCLI pins `>=22 <23` — ✓) |
+| Verified CLI version | `0.19.8` |
+| Default model | from `~/.qwen/settings.json#model.name` (falls back to `qwen3-coder-plus`) |
+| Auth command | **None** (`qwen auth (removed)` in 0.19.7/8) — auth via env vars or direct edit of `~/.qwen/settings.json` (see § 5) |
+| Permission modes (UI) | `['default', 'plan', 'auto-edit', 'bypassPermissions']` — mapped to Qwen's `--approval-mode` flag |
+| Permission modes (CLI) | `plan`, `default`, `auto-edit`, `yolo` (verified against `qwen --approval-mode=plan` runtime behavior) |
+| MCP scopes | `user`, `project` (no `local`) |
+| MCP transports | `stdio`, `http`, `sse` |
+| Skill roots | `~/.qwen/skills/`, `<git-root>/.qwen/skills/` |
+| Skill command prefix | `/` |
+| Skill file format | `SKILL.md` with YAML frontmatter (`name`, `description`, optional `priority`) |
+| Session storage | JSONL at `~/.qwen/projects/<sanitized-cwd>/chats/<session-id>.jsonl` |
+| Resume (per-id) | `qwen --resume <id>` |
+| Resume (last) | `qwen --continue` (analogous to `claude -c`) |
+| Sidebar dot color | `bg-red-500` (Aliyun/Qwen brand) |
+| Brand color (Tailwind) | `red` |
+| Capability subagent | ✓ |
+| Capability images | ✓ (Qwen VL models + Computer Use) |
+| Capability computer-use | ✓ (flags exist) |
+| Capability sandbox | ✓ (`--sandbox`) |
+| Capability rawReasoning | ✓ (inline `parts[]` with `thought: true` flag) |
+| Capability sessionContinuable | ✓ (`--continue`) |
+| `supportsPermissionRequests` | `false` (real interactive prompts deferred — `qwen serve --http-bridge` is Stage 1 experimental; see § 14) |
 
-## 2. Architecture at a glance
+## 2. Status
+
+**IMPLEMENTED — all 12 phases shipped.** Verified live in `/opt/cloud-cli2026`
+with `MiniMax-M3` as the configured model and a MiniMax token-plan subscription.
+
+What shipped (verified in tree):
+
+- Type unions updated (`server/shared/types.ts:68`, `src/types/app.ts`).
+- Provider registry row (6th provider, all 6 capability facets).
+- Module: `server/modules/providers/list/qwen/{qwen,qwen-auth,qwen-mcp,qwen-models,qwen-skills,qwen-sessions,qwen-session-synchronizer}.provider.ts`.
+- Spawner: `server/qwen-cli.js` (NDJSON line buffer, abort handler, stderr filter, exit-code-≠-0 success tolerance).
+- Watcher: `PROVIDER_WATCH_PATHS.qwen = { rootPath: '~/.qwen/projects' }` in
+  `server/modules/providers/services/sessions-watcher.service.ts`.
+- Frontend: full UI integration across `MessageComponent`, `ProviderSelectionEmptyState`,
+  `ChatInterface`, `useChatProviderState`, `useChatComposerState`, `SessionProviderLogo`,
+  `mcp/constants.ts`, `skills/view/ProviderSkills.tsx`, `AgentListItem`,
+  `AgentConnectionsStep`, `useSettingsController`.
+- i18n: all 11 locales updated (`en` + `es` natively; 9 fallback locales verbatim
+  English per project convention).
+
+What's deferred (follow-up, not blocking):
+
+- `qwen serve --http-bridge` for real interactive prompts (`ask_user_question`,
+  `exit_plan_mode`) — Stage 1 experimental in upstream Qwen. See § 14.
+- `qwen channels` (Telegram/Discord/WeChat) integration — out of scope.
+- `qwen extensions` / `--install-extension` plugin ecosystem — out of scope.
+- Computer Use UI panel — capability flag exists, no panel yet.
+
+## 3. Architecture at a glance
 
 ```
                  ┌────────────────────────────┐
@@ -48,15 +102,17 @@ across 12 phases. See [section 11](#11-implementation-roadmap).
                  ┌────────────────────────────┐
                  │  server/qwen-cli.js        │
                  │  spawn 'qwen' subprocess   │
+                 │  -p "<prompt>"             │
+                 │  -m <resolvedModel>        │
+                 │  --approval-mode <mode>    │
                  │  --output-format stream-   │
-                 │  json --include-partial-   │
-                 │  messages                  │
+                 │  json                      │
                  │  NDJSON line buffer        │
                  └──────────────┬─────────────┘
                                 │ session_created
-                                │ tool_use
-                                │ thinking
-                                │ result
+                                │ text / thinking
+                                │ tool_use / tool_result
+                                │ stream_end
                                 ▼
                  ┌────────────────────────────┐
                  │  QwenSessionsProvider      │
@@ -69,199 +125,159 @@ across 12 phases. See [section 11](#11-implementation-roadmap).
                  │  Frontend render           │
                  │  useChatProviderState      │
                  │  ChatInterface             │
+                 │  MessageComponent          │
                  └────────────────────────────┘
 ```
 
 **Transport note:** unlike Claude (in-process `@anthropic-ai/claude-agent-sdk`),
 qwen is a **subprocess** model — exactly like opencode, gemini, cursor, codex.
-The npm package `@qwen-code/qwen-code@0.19.7` is the CLI binary, **not** a
+The npm package `@qwen-code/qwen-code@0.19.8` is the CLI binary, **not** a
 TypeScript API (verified by `npm pack` — `package.json#main` = `cli.js`, no
 `types`, no `dist/index.js`).
 
-## 3. Backend module layout
-
-The qwen provider lives at `server/modules/providers/list/qwen/`. Seven files
-mirror the opencode pattern (the closest precedent — see
-[`docs/providers/opencode.md`](./opencode.md)):
-
-| Facet | File | Exported class | Pattern source |
-|---|---|---|---|
-| Wrapper | `qwen.provider.ts` | `QwenProvider extends AbstractProvider` | `opencode.provider.ts` |
-| Auth | `qwen-auth.provider.ts` | `QwenProviderAuth implements IProviderAuth` | `opencode-auth.provider.ts` |
-| Models | `qwen-models.provider.ts` | `QwenProviderModels implements IProviderModels` + `QWEN_FALLBACK_MODELS` | `opencode-models.provider.ts` |
-| MCP | `qwen-mcp.provider.ts` | `QwenMcpProvider extends McpProvider` | `gemini-mcp.provider.ts` (closer than opencode on JSON shape) |
-| Skills | `qwen-skills.provider.ts` | `QwenSkillsProvider extends SkillsProvider` | `opencode-skills.provider.ts` |
-| Sessions | `qwen-sessions.provider.ts` | `QwenSessionsProvider implements IProviderSessions` | `gemini-sessions.provider.ts` (JSONL) |
-| Session sync | `qwen-session-synchronizer.provider.ts` | `QwenSessionSynchronizer implements IProviderSessionSynchronizer` | `gemini-session-synchronizer.provider.ts` |
-
-Plus the chat runtime spawner at the server root (parallel to `server/opencode-cli.js`,
-`server/gemini-cli.js`):
-
-| Chat runtime | File | Exports |
-|---|---|---|
-| Spawner | `server/qwen-cli.js` (NEW) | `spawnQwen`, `abortQwenSession`, `isQwenSessionActive`, `getActiveQwenSessions` |
-
 ## 4. Runtime CLI: `server/qwen-cli.js`
 
-Mirror `server/opencode-cli.js:85-319`. Concretely:
+Mirror of `server/opencode-cli.js`, with three Qwen-specific behaviors
+documented in this section.
 
-- `const spawnFunction = process.platform === 'win32' ? crossSpawn : spawn;`
-- **Flags confirmed by Phase-0 probing** (`qwen --help`, v0.19.7):
-  - `--output-format [choices: "text", "json", "stream-json"]` — **NO `--include-partial-messages`** flag exists (unlike Claude). `stream-json` is plain NDJSON, one event per line; `json` wraps the whole run as a single array.
-  - `-c, --continue [boolean]` — resume most recent session for the current cwd.
-  - `-r, --resume <string>` — resume a specific session by id; without id shows session picker.
-  - `-m, --model <string>` — overrides `settings.json#model.name` for this run.
-  - `--fallback-model <string[]>` — repeatable, max 3.
-  - `-p, --prompt <string>` — appended to input on stdin (if any).
-  - `-s, --sandbox [boolean]` — run in qwen's own sandbox (not Claude's).
-  - `--safe-mode [boolean]` — disables context files / hooks / extensions / skills / MCP for troubleshooting.
-  - `--bare [boolean]` — skip implicit startup auto-discovery; only honor explicit CLI inputs.
-  - `--proxy <schema://user:pw@host:port>` — proxy for Qwen Code (deprecated → settings.json `proxy`).
-  - `--insecure [boolean]` — skip TLS (lab only).
-  - `--chat-recording [boolean]` — when false, history not saved; `-c/-r` won't work.
-- Args assembled before spawn (corrected from `--include-partial-messages`):
-  ```js
-  const args = ['--output-format', 'stream-json'];
-  if (sessionId) args.push('--resume', sessionId);
-  else if (continueLast) args.push('--continue');
-  if (resolvedModel) args.push('--model', resolvedModel);
-  if (sandboxMode) args.push('--sandbox');
-  args.push(command?.trim() ?? '');   // empty for sessions without a fresh prompt
-  ```
-- `qwenProcess = spawnFunction('qwen', args, { cwd, stdio: 'pipe', env: ...process.env });`
-- **Stdin handling (do NOT close early).** Unlike `opencode-cli.js:219` which closes
-  `opencodeProcess.stdin.end()` immediately after spawn (locking out future
-  round-trip responses to mid-stream tools), the qwen spawner should keep
-  `qwenProcess.stdin` open until the run completes or is aborted. This is a
-  forward-compat decision: if qwen-code later exposes an interactive flow
-  (analogous to Claude's `canUseTool` callback), the driver will need to
-  inject responses back to the subprocess over stdin. Closing it on spawn
-  forecloses that path. For the first iteration, the spawner simply does not
-  touch stdin — the CLI does not read from it.
-- `activeQwenProcesses: Map<sessionId, ChildProcess>`. `registerQwenSession()` re-keys when qwen announces its native session id (first event with `session_id`).
-- NDJSON line buffer (`split(/\r?\n/)`) — reuse pattern at `opencode-cli.js:221-229`.
-- `completeSent` flag shared between `close` and `error` handlers — `opencode-cli.js:97`.
-- `stderr` → `stream_delta` frames with `kind:'error'` — mirror `opencode-cli.js:231-243`.
-- `abortQwenSession(id)`: `process.aborted = true` + `kill('SIGTERM')` — mirror `opencode-cli.js:322-334`.
+### 4.1 Spawn flags (verified for qwen 0.19.8)
 
-The chat path **does NOT use `server/qwen-cli.js` as a `spawnFn`** —
-`query<Provider>SDK` analogues don't exist for qwen (no TS SDK). Instead
-the runtime is wired in via the standard `spawnFns.qwen` slot in
-[`server/index.js:117-130`](../../server/index.js#L117) (analogue: opencode at
-`server/index.js:118`).
+The Qwen CLI does **NOT** expose `--include-partial-messages` (the original
+draft of this doc assumed it did — that was Claude's flag, not Qwen's).
+Qwen emits one NDJSON line per `assistant` turn with the complete `content[]`
+of that turn. Streaming UX = `stream_delta` per `assistant` frame, not per
+token. This is a Qwen limitation noted in the comparative matrix.
 
-### Verified by Phase 0
+Args assembled before spawn (current state of `qwen-cli.js`):
 
-- `which qwen` → `/root/.local/bin/qwen`
-- `qwen --version` → `0.19.7`
-- `qwen -p "hola" --output-format stream-json` → emits NDJSON with `system.init`, `assistant.thinking`, `assistant.text`, `result.success` events.
+```js
+if (sessionId) {
+  // -r, --resume <string> — resume a specific session by id
+  args.push('-r', sessionId);
+} else {
+  // -p, --prompt <string> — non-interactive single prompt.
+  // We do NOT use -i (--prompt-interactive) because qwen CLI rejects it
+  // when stdin is a pipe that has been closed (`stdin.end()`). Verified:
+  // passing -i + a closed pipe yields "Error: The --prompt-interactive flag
+  // cannot be used when input is piped from stdin." in qwen 0.19.8.
+  args.push('-p', command?.trim() || '');
+}
+if (resolvedModel) args.push('-m', resolvedModel);
+if (permissionMode && permissionMode !== 'default') {
+  const qwenApprovalMode =
+    permissionMode === 'plan' ? 'plan'
+    : permissionMode === 'auto-edit' ? 'auto-edit'
+    : permissionMode === 'bypassPermissions' ? 'yolo'
+    : null;
+  if (qwenApprovalMode) args.push('--approval-mode', qwenApprovalMode);
+}
+args.push('--output-format', 'stream-json');
+```
 
-### Subprocess vs `qwen serve` daemon
+### 4.2 Arg construction: `-r` and `-p` per mode
 
-`qwen serve` (Stage 1 experimental `--http-bridge` flag) exposes the agent as an
-HTTP+SSE/ACP daemon for multi-client access. **NOT in scope for the first PR.**
-Follow-up: when CloudCLI gains a "shared agent across tabs" feature, swap the
-spawner to consume that endpoint instead.
+The spawner in `server/qwen-cli.js#spawnQwen` branches on `sessionId` to
+build the argv. Both modes pass `-p` whenever there is text:
 
-### Resume vs continue
+- **Fresh (`-p <text>`)** — the user's message goes straight in via the
+  non-interactive prompt flag. No `-r`, no stdin needed.
+- **Resume (`-r <id>`)** — the user message is ALSO forwarded as `-p <text>`
+  in addition to `-r`. This is required, not optional, in qwen 0.19.8:
+  `qwen --help` documents `-p` as "Prompt. Appended to input on stdin (if
+  any)" and CLI rejects runs with just `-r` and an empty stdin with
+  `No input provided via stdin. Input can be provided by piping data into
+  gemini or using the --prompt option.` (which used to abort every
+  continuation message). Stdin stays OPEN in resume mode so the CLI does
+  not protest the pipe; we never feed it any data.
 
-Unlike the Codex/Claude "resume by id" pattern (which CloudCLI follows), qwen
-has two resume mechanisms:
+We deliberately do NOT use `-i` (`--prompt-interactive`) because qwen CLI
+rejects it when stdin is a closed pipe — see the comment in
+`qwen-cli.js:151-157` for the full rejection message. For forward-compat
+with `qwen serve --http-bridge` (when it stabilizes), the spawner can be
+swapped to consume that endpoint instead.
 
-- `qwen --resume <id>` (per-id, like Claude `claude --resume`)
-- `qwen --continue` (most recent in cwd, the equivalent of `claude -c` we just
-  discussed in the previous turn — see [`docs/providers/codex.md`](./codex.md)
-  for the analogous decision point)
+### 4.3 Stdin handling per mode
 
-The shell path (`shell-websocket.service.ts:139-147`-style) wires the `--resume
-<id>` form when CloudCLI has an app session id. The `--continue` form is only
-relevant if we add an explicit "Resume most recent session" UI button (open
-question for the follow-up UX pass).
+Stdin treatment differs by branch:
 
-## 5. Event protocol — `qwen --output-format stream-json` shape
+- **Fresh** (`-p`, no `-r`) — `qwenProcess.stdin.end()` is called right
+  after spawn. Without `.end()`, the CLI keeps the parent pipe open and
+  waits forever for input the parent never sends.
+- **Resume** (`-r <id>` + `-p`) — stdin stays OPEN (no `.end()`). Qwen
+  0.19.8's resume mode reads from stdin in a tight loop until EOF; closing
+  the pipe forces an early abort even when the prompt was already
+  supplied via `-p`. Verified: `qwen --version` and `qwen --help` give
+  no flag to disable that read; we just leave the pipe alone.
 
-**Phase 0 (v0.19.7) confirmed event names — verbatim shapes captured from a
-live spawn** (`qwen -p "hola" --output-format stream-json`):
+The contract is enforced by a single `if (!sessionId) { qwenProcess.stdin.end(); }`
+after the spawn in `qwen-cli.js:200-202`.
 
-### Per-event shapes (NDJSON, one per line)
+### 4.4 stderr handling — warning vs error
 
-| Event `type` | Required fields | Optional fields | → NormalizedMessage kind |
-|---|---|---|---|
-| `system`, `subtype:"init"` | `uuid`, `session_id`, `cwd`, `tools[]`, `mcp_servers[]`, `model`, `permission_mode`, `slash_commands[]`, `qwen_code_version`, `agents[]` | — | `session_created` (first iteration — tracks model, available tools, agents, MCP) |
-| `assistant` | `uuid`, `session_id`, `message.{id,role:"assistant",model,content[]}` | `parent_tool_use_id`, `message.usage` | frame-by-frame map of `message.content[]` (see below) |
-| `user` (echoed user turn) | `uuid`, `session_id`, `message.{role:"user",content[]}` | `parent_tool_use_id` | pass-through (or skip — same as opencode) |
-| `user` with `tool_result` | same as above, but `message.content[]` has items `{type:"tool_result",tool_use_id,is_error,content}` | — | `tool_result`, linked to prior `tool_use` by `tool_use_id` |
-| `result`, `subtype:"success"` | `uuid`, `session_id`, `is_error`, `duration_ms`, `duration_api_ms`, `num_turns`, `result` (string), `usage` (`input_tokens`, `output_tokens`, `cache_read_input_tokens`, `total_tokens`) | `permission_denials[]`, `stats.{models,tools,files,skills}` | `stream_end` (single terminal event) |
-| `result`, `subtype:"error_max_turns"` / `"error"` | same + `is_error:true`, error payload | — | `stream_end` with `kind: 'error'` |
+Qwen 0.19.x writes informational notices to stderr even on successful runs:
 
-### `message.content[]` for `assistant` events
+- `Warning: running headless with --yolo` (sandbox/YOLO warning)
+- Deprecation hints
+- MCP startup chatter
 
-Each item is one of:
-- `{type:"thinking", thinking:"..."}` → `kind: 'thinking'`
-- `{type:"text", text:"..."}` → `kind: 'text'`
-- `{type:"tool_use", id:"call_function_xxx", name:"grep_search"|"read_file"|"ask_user_question"|..., input:{...}}` → `kind: 'tool_use'`
+If we forward every stderr line as `kind:'error'` to the UI, the chat shows a
+red banner for a successful run. The spawner filters stderr against these
+patterns (only treat as real error):
 
-**No `delta` events.** Unlike Claude's `--include-partial-messages`, qwen emits
-each `assistant` event with the complete `content[]` array for that turn.
-Streaming UX = `stream_delta` per `assistant` frame, not per token. Document
-this as a qwen limitation in the comparison table.
+```js
+const looksLikeError =
+  /^Error:/i.test(trimmed)
+  || /\bENOENT\b/i.test(trimmed)
+  || /\binvalid params\b/i.test(trimmed)
+  || /\bpermission_denied\b/i.test(trimmed);
+if (!looksLikeError) {
+  console.warn('[Qwen] stderr:', trimmed);
+  return;
+}
+ws.send(createNormalizedMessage({ kind: 'error', content: trimmed, ... }));
+```
 
-### `result.stats.*` (free telemetry)
+This is the same demote-noise-to-warn pattern documented for Claude's
+`ede_diagnostic` event and OpenCode's PM2 restart kill in `CLAUDE.md`.
 
-```json
-{
-  "stats": {
-    "models": { "<model-name>": { "api": {...}, "tokens": {...}, "bySource": {...} } },
-    "tools":  { "totalCalls": 12, "totalSuccess": 12, "byName": { "grep_search": {...} } },
-    "files":  { "totalLinesAdded": 0, "totalLinesRemoved": 0 },
-    "skills": { "totalCalls": 0, "totalSuccess": 0, "byName": {} }
-  }
+### 4.5 Exit code ≠ 0 on success
+
+Qwen 0.19.x emits a non-zero exit code whenever it has printed anything on
+stderr — even just the YOLO/headless warning. The spawner tracks whether the
+NDJSON stream emitted a `result.success` frame, and treats the close as
+success if either the exit code is 0 OR `resultSuccessSeen`:
+
+```js
+if (code === 0 || resultSuccessSeen) {
+  notifyTerminalState({ code: 0 });
+  resolve();
+  return;
 }
 ```
 
-`QwenSessionsProvider` maps `stats.models.<model>.tokens.{input,output,cached,total}`
-directly into the WebSocket `usage` block — no need to scrape `usage` events.
-`stats.tools.byName` is useful for the token-usage dashboard.
+Without this guard, a successful chat run was being reported as "run failed"
+in the notification orchestrator (web-push + desktop notifications fired with
+`run_failed` instead of `run_stopped`).
 
-### `permission_denials[]` (free telemetry)
+### 4.6 Verified by Phase 0
 
-Empty array in all our probes (qwen does not block tools in non-interactive mode).
-Map each entry as `kind: 'error'` with `text: 'permission_denied: <tool>'` if
-non-empty — useful as a signal that the user's `permission_mode` is too strict.
+- `which qwen` → `/root/.local/bin/qwen`
+- `qwen --version` → `0.19.8`
+- `qwen -p "hola" --output-format stream-json` → emits NDJSON with
+  `system.init`, `assistant` (with `parts[]` carrying `thought: true`), `result`.
 
-### Tool names that qwen supports (from `tools[]` in init event)
+### 4.7 Resume vs continue
 
-`grep_search`, `read_file`, `glob`, `list_directory`, `web_fetch`, `cron_create`,
-`cron_list`, `cron_delete`, `loop_wakeup`, `agent`, `task_stop`, `send_message`,
-`read_mcp_resource`, `tool_search`, `skill`, `ask_user_question`, `exit_plan_mode`,
-`enter_plan_mode`, `enter_worktree`, `exit_worktree`, plus
-`computer_use__<action>` (37 computer-use tools).
+Qwen has two resume mechanisms:
 
-**CloudCLI already recognizes most of these** from Claude (same names by design —
-qwen forked Claude's tool surface). No new `ToolRenderer` registrations needed
-in MVP except `skill` if we want to render skill invocations separately.
+- `qwen --resume <id>` (per-id, like Claude `claude --resume`)
+- `qwen --continue` (most recent in cwd)
 
-### Deferred events (Phase 0 + first iteration)
+The CloudCLI chat path passes `-r <id>` when an app session id exists; the
+`-c` form is only relevant if we add an explicit "Resume most recent session"
+UI button (open question for a follow-up UX pass).
 
-| Event type | → NormalizedMessage kind | First iteration? |
-|---|---|---|
-| `permission_request` | `permission_request` | **Deferred** — see [§ 18](#18-interactive-prompts-ui-planned) |
-| `permission_cancelled` | `permission_cancelled` | **Deferred** — see [§ 18](#18-interactive-prompts-ui-planned) |
-| `ask_user_question` tool_use (in assistant.content[]) | `tool_use` with `name: 'ask_user_question'` | **Deferred** — qwen's `-p` mode refuses to invoke it (verified: "The `ask_user_question` tool is unavailable in the current non-interactive mode"). Would require `qwen serve --http-bridge` (Stage 1 experimental) for real interactivity. |
-| `exit_plan_mode` tool_use | `tool_use` with `name: 'exit_plan_mode'` | **Deferred** — same reason. |
-| `system`, `subtype:"compact_boundary"` | `status` | Phase 2 (no schema yet) |
-| `system`, `subtype:"session_start"` | `session_started` | Phase 2 |
-
-### Defensive normalization
-
-`QwenSessionsProvider.normalizeMessage()` must mirror opencode at
-[`opencode-sessions.provider.ts:222-319`](../../server/modules/providers/list/opencode/opencode-sessions.provider.ts#L222):
-return `[]` for unrecognised event types — never crash. This matters specifically
-because (a) the CLI is third-party and may evolve the schema between minor
-versions and (b) qwen emits all 37 `computer_use__*` tools in `init.tools[]`
-even when unused. Fall back to `kind: 'error'` with `text: 'unparsed_line: ' + JSON.stringify(raw).slice(0,200)` for shapes the normalizer cannot map.
-
-## 6. Auth & environment
+## 5. Auth & environment
 
 **Phase 0 reality (`qwen --help`):** there is **NO login subcommand**.
 
@@ -271,16 +287,23 @@ qwen auth          Configure authentication (removed)
 
 `qwen auth` is listed in `--help` only as a deprecation stub. Credentials are
 configured **out-of-band** by writing `~/.qwen/settings.json` (or exporting
-env vars before spawn). Verified in this host:
+env vars before spawn).
+
+### 5.1 Verified settings.json shape (this host, 2026-07-08)
 
 ```json
 {
   "env": {
-    "QWEN_CUSTOM_API_KEY_ANTHROPIC_HTTPS_API_MINIMAX_IO_ANTHROPIC_36C86C5DB998": "sk-cp-..."
+    "QWEN_CUSTOM_API_KEY_ANTHROPIC_HTTPS_API_MINIMAX_IO_ANTHROPIC_<hash>": "sk-cp-..."
   },
   "modelProviders": {
     "anthropic": [
-      { "id": "MiniMax-M3", "name": "MiniMax-M3", "baseUrl": "https://api.minimax.io/anthropic", "envKey": "..." }
+      {
+        "id": "MiniMax-M3",
+        "name": "MiniMax-M3",
+        "baseUrl": "https://api.minimax.io/anthropic",
+        "envKey": "QWEN_CUSTOM_API_KEY_ANTHROPIC_HTTPS_API_MINIMAX_IO_ANTHROPIC_<hash>"
+      }
     ]
   },
   "security": { "auth": { "selectedType": "anthropic" } },
@@ -288,104 +311,244 @@ env vars before spawn). Verified in this host:
 }
 ```
 
-### Credential resolution priority (highest first)
+**Critical detail:** the `envKey` value is a **hash of the baseUrl**, not a
+human-readable name. Qwen derives it deterministically when `modelProviders`
+is rewritten via `qwen mcp` or other management commands. Read path: trust
+whatever `envKey` the file currently contains.
 
-The 4-source cascade — `qwen-auth.provider.ts` must walk in this order,
-returning the first hit, and only emit `'Qwen not configured'` when **all are
-empty or missing**:
+### 5.2 Credential resolution priority (highest first)
 
-1. **`~/.qwen/settings.json`** (parsed as JSON5 or via `JSON.parse` for strict
-   hosts):
-   - `security.auth.selectedType === 'anthropic'` → look up
-     `modelProviders.anthropic[0].envKey` and read `env[<that key>]`.
-   - `security.auth.selectedType === 'openai'` / `'gemini'` / `'qwen-oauth'` →
-     analogous lookup in `modelProviders[<type>][0]`.
-   - Each `modelProviders.<type>[]` entry has `{ id, name, baseUrl, envKey }`;
-     `envKey` is the env var that holds the credential (the key in
-     `settings.json#env` is a hash of the baseUrl, not human-readable).
-2. **Environment variables on the CloudCLI process** (verified by Phase 0 probe):
-   - `ANTHROPIC_API_KEY` + `ANTHROPIC_BASE_URL` + `ANTHROPIC_MODEL` (used by this host)
+`qwen-auth.provider.ts` walks this 4-source cascade, returning the first hit
+and only emitting `'Qwen not configured'` when **all are empty or missing**:
+
+1. **`~/.qwen/settings.json`** — `security.auth.selectedType === 'anthropic'` →
+   look up `modelProviders.anthropic[0].envKey` and read `env[<that key>]`.
+   Same shape for `'openai'` / `'gemini'` / `'qwen-oauth'`.
+2. **Environment variables on the CloudCLI process**:
+   - `ANTHROPIC_API_KEY` + `ANTHROPIC_BASE_URL` + `ANTHROPIC_MODEL`
    - `OPENAI_API_KEY` + `OPENAI_BASE_URL` + `OPENAI_MODEL`
    - `GEMINI_API_KEY` + `GEMINI_MODEL`
-   - `BAILIAN_CODING_PLAN_API_KEY` (Qwen Coding Plan, base `coding.dashscope.aliyuncs.com/v1`)
-3. **Project-level**: `.qwen/.env`, `.env`, `<project>/.qwen/.env` (per docs
-   resolution order — must use a `.env` parser, e.g. `dotenv`).
+   - `BAILIAN_CODING_PLAN_API_KEY` (Qwen Coding Plan)
+3. **Project-level**: `.qwen/.env`, `.env`, `<project>/.qwen/.env`.
 4. **Global**: `~/.qwen/.env`, `~/.env`.
 
-### Multi-source cascade pattern (mandatory)
+### 5.3 Multi-source cascade pattern (mandatory)
 
-Mirror `codex-auth.provider.ts:64-75` (10 cases in `codex-auth.test.ts`). Each
-source must be a separate helper (`readSettingsJson()`, `readEnvCredentials()`,
-`readProjectDotenv()`, `readGlobalDotenv()`) so the test suite can patch each
-in isolation. The negative case "all sources empty" must return
+Mirror `codex-auth.provider.ts:64-75`. Each source must be a separate helper
+(`readSettingsJson()`, `readEnvCredentials()`, `readProjectDotenv()`,
+`readGlobalDotenv()`) so the test suite can patch each in isolation. The
+negative case "all sources empty" must return
 `{ authenticated: false, error: 'Qwen not configured' }`.
 
-### Install detection
-
-```ts
-spawn.sync('qwen', ['--version'], { stdio: 'ignore', timeout: 5000 });   // returns true on this host
-```
-
-`which qwen` was `/root/.local/bin/qwen` in our probe. No `QWEN_CLI_PATH`
-override needed for MVP; users can `ln -s` if their install lives elsewhere.
-
-### Login UI
+### 5.4 Login UI
 
 **There is no `ProviderLoginModal` for qwen.** `getProviderCommand()` in
-[`ProviderLoginModal.tsx:15-53`](../../src/components/provider-auth/view/ProviderLoginModal.tsx#L15)
-must NOT add a `qwen login` case — `qwen auth` is removed and there's no
-fallback verb. Instead, the Settings → Agents → Qwen row shows:
+`ProviderLoginModal.tsx` must NOT add a `qwen login` case — `qwen auth` is
+removed and there's no fallback verb. Instead, the Settings → Agents → Qwen
+row shows:
 
 - Status badge: green if at least one source authenticated; red if not.
-- **No "Iniciar sesión" button.** The action button is **"Configurar credenciales"**,
-  opening a `QwenAuthInstructionsModal` (NEW component, mirrors the structure
-  of `ProviderLoginModal` but shows instructions instead of launching a PTY):
+- **No "Iniciar sesión" button.** The action button is
+  **"Configurar credenciales"**, opening a `QwenAuthInstructionsModal` (NEW,
+  mirrors `ProviderLoginModal` structure but shows instructions instead of
+  launching a PTY):
   - Tab 1: "Exportar variables de entorno" — copyable blocks per selected
     provider (`anthropic` / `openai` / `gemini`).
-  - Tab 2: "Editar `~/.qwen/settings.json`" — shows the current file contents
+  - Tab 2: "Editar `~/.qwen/settings.json`" — shows current file contents
     (read-only) + a textarea for edits with "Guardar" button. Write is wrapped
     in a backup-to-`settings.json.bak` + atomic rename pattern.
   - Tab 3: "Estado actual" — table with each source × `present`/`missing` and
     the resolved `selectedType` + `model.name`.
-- For OAuth-style providers (`qwen-oauth`), tab 1 links to the Aliyun
-  console; tab 2 helps the user generate and paste the OAuth token into
-  `settings.json#env[...]`.
 
-This keeps the install detection + runtime path orthogonal to the auth UX:
-runtime spawn reads `settings.json` or env vars; auth UX just **shows** where
-the credentials live and helps the user edit them safely.
-
-### Path safety
+### 5.5 Path safety
 
 All writes to `~/.qwen/settings.json` must go through `utils/safe-write.js`
 (atomic write + chmod 600 + `.bak` rotation) — same guarantees we apply for
-`~/.codex/auth.json`. See the recipe in [`docs/providers/codex.md`](./codex.md#auth-resolution--3-source-cascade).
+`~/.codex/auth.json`. See the recipe in
+[`docs/providers/codex.md`](./codex.md#auth-resolution--3-source-cascade).
 
-## 7. Models
+## 6. Models
 
-**Catalog strategy: static-only first iteration.** No `qwen models` subcommand
-was found in `cli.js` — model listing reads from settings or hardcoded binaries.
+**Catalog strategy: hybrid — settings.json promotion + static fallback.**
 
-```ts
-QWEN_FALLBACK_MODELS: ProviderModelsDefinition = {
-  OPTIONS: [
-    { value: 'qwen3-coder-plus',  label: 'Qwen3 Coder Plus',  description: '…' },
-    { value: 'qwen3-coder-flash', label: 'Qwen3 Coder Flash', description: '…' },
-    { value: 'qwen3-max',         label: 'Qwen3 Max',         description: '…' },
-    { value: 'qwen-vl-max',       label: 'Qwen VL Max',       description: '…' },
-    { value: 'claude-sonnet-4.5', label: 'Claude Sonnet 4.5 (via Anthropic)', description: '…' },
-    { value: 'gpt-5.4',           label: 'GPT-5.4 (via OpenAI)',                description: '…' },
-  ],
-  DEFAULT: 'qwen3-coder-plus',
-};
+### 6.1 Two-source model resolution
+
+`qwen-models.provider.ts` resolves the model catalog in this priority order
+(verified end-to-end on this host with the MiniMax proxy):
+
+1. **`settings.json#model.name`** — promoted to `DEFAULT`. If the catalog is
+   otherwise empty, it also becomes the first option. This was added after
+   real-world bug: Codex + Qwen were both returning a hardcoded fallback list
+   that included models the upstream proxy didn't accept (e.g. `gpt-5.5` on
+   Codex, which the MiniMax proxy rejected with `2013 unknown model`).
+   Verified: when `~/.qwen/settings.json#model.name === 'MiniMax-M3'`, that's
+   the DEFAULT, and the UI selector only shows `MiniMax-M3` plus the static
+   fallback list.
+
+2. **Static fallback** `QWEN_FALLBACK_MODELS`:
+   ```ts
+   {
+     OPTIONS: [
+       { value: 'qwen3-coder-plus',  label: 'Qwen3 Coder Plus' },
+       { value: 'qwen3-coder-flash', label: 'Qwen3 Coder Flash' },
+       { value: 'qwen3-max',         label: 'Qwen3 Max' },
+       { value: 'qwen-vl-max',       label: 'Qwen VL Max' },
+     ],
+     DEFAULT: 'qwen3-coder-plus',
+   }
+   ```
+   Note: `claude-sonnet-4.5` and `gpt-5.4` were removed in the final catalog —
+   they're not Qwen models; the multi-protocol routing is achieved through
+   `settings.json#modelProviders` instead.
+
+3. **Defensive runtime validation** in `server/routes/agent.js#resolveModel`:
+   ```js
+   const resolveModel = (requested, def) => {
+     if (!requested) return def.DEFAULT;
+     if (def.OPTIONS.some((opt) => opt.value === requested)) return requested;
+     return def.DEFAULT;
+   };
+   ```
+   Applied to both `qwen` and `codex` branches. Stops a stale localStorage
+   model from reaching the upstream proxy (which would crash the whole run
+   with `invalid params`).
+
+### 6.2 Cache strategy
+
+Do NOT add qwen to `UNCACHED_PROVIDERS`
+(`server/modules/providers/services/provider-models.service.ts:20`). Use the
+on-disk cache like opencode.
+
+If `qwen models` is discovered in a future version, mirror
+`opencode-models.provider.ts:216-270` (`runOpenCodeModelsCommand`, 20s timeout).
+
+## 7. Event protocol — `qwen --output-format stream-json` shape
+
+**Verified against qwen 0.19.8 on 2026-07-08** using real sessions in
+`~/.qwen/projects/-opt-cloud-cli2026/chats/*.jsonl`.
+
+### 7.1 Per-event shapes (NDJSON, one per line)
+
+| Event `type` | Required fields | Optional fields | → NormalizedMessage kind |
+|---|---|---|---|
+| `system`, `subtype:"init"` | `uuid`, `sessionId`, `cwd`, `version`, `tools[]`, `mcpServers[]`, `model`, `slashCommands[]`, `qwenCodeVersion`, `agents[]` | — | (consumed by gateway; not surfaced as a chat message) |
+| `user` | `uuid`, `parentUuid`, `sessionId`, `timestamp`, `cwd`, `version`, `gitBranch`, `message: { role: "user", parts: [{ text }] }` | `attachment` | `kind: 'text', role: 'user'` |
+| `assistant` | `uuid`, `parentUuid`, `sessionId`, `timestamp`, `cwd`, `version`, `model`, `message: { role: "model", parts: [{ text, thought? }] }` | `usageMetadata`, `contextWindowSize` | split per-part (see § 7.2) |
+| `thinking` | (top-level event, also seen) | `content`, `message` | `kind: 'thinking'` |
+| `tool_use` | `uuid`, `sessionId`, `tool_name`, `tool_input`, `tool_use_id` | `id` | `kind: 'tool_use'` |
+| `tool_result` | `uuid`, `sessionId`, `tool_use_id`, `content` | `is_error` | `kind: 'tool_result'`, attached to parent `tool_use` via `toolId` map |
+| `error` | `error` or `message` | — | `kind: 'error'` |
+| `result` | `sessionId`, `duration_ms`, `result` | `stats.{models,tools,files,skills}` | `kind: 'stream_end'` (terminal) |
+
+### 7.2 `message.parts[]` for `assistant` events — THE CRITICAL DETAIL
+
+Qwen 0.19.8 writes assistant rows as:
+
+```json
+{
+  "type": "assistant",
+  "message": {
+    "role": "model",
+    "parts": [
+      { "text": "The user is asking...", "thought": true,  "thoughtSignature": "..." },
+      { "text": "Hello! I'm Qwen Code..." }
+    ]
+  },
+  "usageMetadata": {
+    "promptTokenCount": 18549,
+    "candidatesTokenCount": 151,
+    "cachedContentTokenCount": 128,
+    "thoughtsTokenCount": 0,
+    "totalTokenCount": 18700
+  },
+  "contextWindowSize": 1000000
+}
 ```
 
-**Cache strategy:** do NOT add qwen to
-`UNCACHED_PROVIDERS` ([`provider-models.service.ts:20`](../../server/modules/providers/services/provider-models.service.ts#L20))
-in the first iteration — use the on-disk cache like opencode.
+**Two structural facts the parser must handle:**
 
-If `qwen models` is discovered in Phase 0, mirror
-`opencode-models.provider.ts:216-270` (`runOpenCodeModelsCommand`, 20s timeout).
+1. **`role: "model"`, not `"assistant"`** — Qwen uses Gemini's terminology
+   (its parent project), not Anthropic's. The normalizer remaps to
+   `role: 'assistant'` for the frontend.
+
+2. **Reasoning inline via `parts[].thought: true`** — unlike Claude (which
+   emits a separate `type: 'thinking'` event) or Gemini (separate
+   `type: 'thought'` block), Qwen embeds the model's internal monologue as
+   a sibling part inside the same `assistant` row. The normalizer must
+   split each `part` into its own `NormalizedMessage`:
+   - `{ text, thought: true }` → `kind: 'thinking'`, separate row
+   - `{ text }` (no thought flag) → `kind: 'text', role: 'assistant'`, separate row
+
+The original draft of this parser concatenated all visible parts into one
+message and **dropped thought parts silently** — which produced a chat where
+the assistant text showed up but the reasoning did not, breaking the
+side-by-side display that Claude users expect. The current implementation
+(`collectAssistantParts`) returns an ordered list and emits each part
+separately.
+
+### 7.3 usageMetadata → tokenUsage
+
+`usageMetadata` lives at the top level of the assistant row (not inside
+`message`). The normalizer stamps it on the LAST emitted message of the
+assistant batch so the sessionStore picks it up as the canonical message
+cost:
+
+```ts
+if (usage && messages.length > 0) {
+  const last = messages[messages.length - 1];
+  last.tokenUsage = { input, output, cached, total };
+}
+```
+
+Field mapping:
+
+| `usageMetadata` | `tokenUsage` |
+|---|---|
+| `promptTokenCount` | `input` |
+| `candidatesTokenCount` | `output` |
+| `cachedContentTokenCount` | `cached` |
+| `totalTokenCount` | `total` |
+
+If all four are zero, the stamp is skipped (defensive — empty metadata
+shouldn't be persisted).
+
+### 7.4 `result.stats.*` (free telemetry)
+
+```json
+{
+  "stats": {
+    "models": { "<model-name>": { "tokens": {...} } },
+    "tools":  { "totalCalls": 12, "byName": {...} },
+    "files":  { "totalLinesAdded": 0, "totalLinesRemoved": 0 },
+    "skills": { "totalCalls": 0 }
+  }
+}
+```
+
+Mapped to the WebSocket `usage` block.
+
+### 7.5 Defensive normalization
+
+`QwenSessionsProvider.normalizeMessage()` returns `[]` for unrecognised event
+types — never crashes. This matters specifically because (a) the CLI is
+third-party and may evolve the schema between minor versions and (b) Qwen
+emits all 37 `computer_use__*` tools in `init.tools[]` even when unused.
+
+The normalizer also has a `collectAssistantParts` helper that:
+- Reads `parts[]` first (Qwen 0.19.x shape)
+- Falls back to `content[]` (Anthropic-style, kept for forward-compat if
+  Qwen changes back)
+- Returns empty array if neither is present — caller treats as "drop the row"
+
+### 7.6 Deferred events (no real-time UI in MVP)
+
+| Event type | Reason deferred |
+|---|---|
+| `permission_request` / `permission_cancelled` | `qwen -p` mode refuses them; needs `qwen serve --http-bridge` (Stage 1). See § 14. |
+| `ask_user_question` tool_use | `qwen -p` mode: "The `ask_user_question` tool is unavailable in the current non-interactive mode." |
+| `exit_plan_mode` tool_use | Same — non-interactive mode rejects it. |
+| `system`, `subtype:"compact_boundary"` | No schema yet in 0.19.8. |
+| `system`, `subtype:"ui_telemetry"` | Pure telemetry, never surfaced to user. |
 
 ## 8. MCP
 
@@ -407,19 +570,11 @@ super('qwen', ['user', 'project'], ['stdio', 'http', 'sse']);
       "env": { "API_KEY": "${EXTERNAL_API_KEY}" },
       "timeout": 15000
     },
-    "httpServer": {
-      "httpUrl": "http://localhost:3000/mcp",
-      "headers": { "Authorization": "Bearer xxx" }
-    },
+    "httpServer": { "httpUrl": "http://localhost:3000/mcp", "headers": {...} },
     "sseServer": { "url": "http://localhost:8080/sse" }
   }
 }
 ```
-
-Override `buildServerConfig`:
-
-- `stdio` → `{ command, args, env?, cwd? }` (qwen native format)
-- `http` / `sse` → `{ httpUrl | url, headers? }`
 
 Read/write paths:
 - **user scope** → `~/.qwen/settings.json`
@@ -427,10 +582,11 @@ Read/write paths:
 
 UI constants in
 [`src/components/mcp/constants.ts`](../../src/components/mcp/constants.ts):
+
 ```ts
 MCP_PROVIDER_NAMES.qwen          = 'Qwen';
 MCP_SUPPORTED_SCOPES.qwen        = ['user', 'project'];
-MCP_SUPPORTED_TRANSPORTS.qwen    = ['stdio', 'http', 'sse'];  // qwen supports all 3
+MCP_SUPPORTED_TRANSPORTS.qwen    = ['stdio', 'http', 'sse'];
 MCP_PROVIDER_BUTTON_CLASSES.qwen = 'bg-primary text-primary-foreground hover:bg-primary/90';
 MCP_SUPPORTS_WORKING_DIRECTORY.qwen = false;
 ```
@@ -438,10 +594,10 @@ MCP_SUPPORTS_WORKING_DIRECTORY.qwen = false;
 ### 8.1 Managed MCP interoperability
 
 Qwen participates in the cross-provider MCP dispatcher
-([`server/modules/providers/services/mcp.service.ts`](../../server/modules/providers/services/mcp.service.ts)).
-When the user toggles **Settings → MiniMax → Enable**, the dispatcher writes
-`cloudcli-minimax` to **all six** provider configs (including Qwen) at user
-scope. Verified working entry shape in `~/.qwen/settings.json`:
+(`server/modules/providers/services/mcp.service.ts`). When the user toggles
+**Settings → MiniMax → Enable**, the dispatcher writes `cloudcli-minimax` to
+**all six** provider configs (including Qwen) at user scope. Verified working
+entry shape in `~/.qwen/settings.json`:
 
 ```json
 {
@@ -459,18 +615,22 @@ scope. Verified working entry shape in `~/.qwen/settings.json`:
 ```
 
 The `cloudli-` prefix triggers the "Managed" lock badge in
-[`src/components/mcp/view/McpServers.tsx`](../../src/components/mcp/view/McpServers.tsx#isManagedServer)
-(line ~58) — Qwen renders the badge identically to the other 5 providers.
+`src/components/mcp/view/McpServers.tsx#isManagedServer` (line ~58). Toggling
+**MiniMax** OFF removes the entry from all six providers atomically.
 
-Alternative install path (CLI):
-```bash
-qwen mcp add cloudcli-minimax uvx -- minimax-coding-plan-mcp -y \
-  --env MINIMAX_API_KEY=sk-cp-... --env MINIMAX_API_HOST=https://api.minimax.io
-```
+### 8.2 Real bug found during testing
 
-`qwen mcp list` reports `cloudcli-minimax: ✓ connected`. Smoke-tested: the
-agent successfully invoked `mcp__MiniMax__web_search` and
-`mcp__MiniMax__understand_image` (see task list #111–#113).
+If the user's `~/.qwen/settings.json` contains an MCP entry that points at a
+URL that doesn't exist (or any other startup-fatal config), Qwen **refuses
+to start at all** — the spawn returns exit code 1 and the chat shows
+"MCP server(s) failed to start: <name>" without any user output. Mitigation:
+the synchronizer + the user-facing UI both rely on the user's manual removal
+of broken entries. CloudCLI does NOT auto-clean MCP configs.
+
+In our test case, the broken entry was `test-sse` with
+`httpUrl: "https://example.com/sse"` — removed manually from
+`~/.qwen/settings.json`. Recommend documenting the "remove or fix before
+next chat" pattern in any user-facing Qwen MCP troubleshooting.
 
 ## 9. Skills
 
@@ -482,157 +642,146 @@ walks up to git root, matching opencode):
 | `~/.qwen/skills/<name>/SKILL.md` | user | `/` |
 | `<git-root>/.qwen/skills/<name>/SKILL.md` | project | `/` |
 
-**Frontmatter** (YAML): `name` (required, regex `/^[\p{L}\p{N}_:.-]+$/u`), `description`
-(required), `priority` (optional, finite number — sort order in `/skills`
-listing).
+**Frontmatter** (YAML): `name` (required, regex `/^[\p{L}\p{N}_:.-]+$/u`),
+`description` (required), `priority` (optional, finite number — sort order in
+`/skills` listing).
 
 **Discovery** uses the provider-neutral
-`findProviderSkillMarkdownFiles` ([`server/shared/utils.ts:939`](../../server/shared/utils.ts#L939)).
+`findProviderSkillMarkdownFiles`
+(`server/shared/utils.ts:939`).
 
-**No cross-compat with `<cwd>/.claude/skills` or `<cwd>/.agents/skills` in the
-first iteration.** Qwen's docs only mention `.qwen` paths. Add cross-compat
+**No cross-compat** with `<cwd>/.claude/skills` or `<cwd>/.agents/skills` in
+the first iteration. Qwen's docs only mention `.qwen` paths. Add cross-compat
 later if users complain.
+
+The per-skill enable/disable toggle (`server/modules/providers/services/skill-state.service.ts`)
+works out-of-the-box for Qwen via the same `SkillsProvider` base class.
 
 ## 10. Sessions and sessionSynchronizer
 
-### Where Qwen stores sessions
+### 10.1 Where Qwen stores sessions
 
 - **Transcripts:** `~/.qwen/projects/<sanitized-cwd>/chats/<session-id>.jsonl`.
 - **Sanitization rule:** the cwd segment under `projects/` replaces every
-  non-`[A-Za-z0-9-]` run with `-` (mirror of Claude's encoding). Two
-  different cwd paths that sanitize to the same string (e.g.
-  `/home/u/proj` and `/home/u:proj`) collapse into the same directory —
-  sessions from both are mixed in the same subfolder.
+  non-`[A-Za-z0-9-]` run with `-` (mirror of Claude's encoding).
 - **Subagent transcripts** (if Qwen spawns sub-agents the way Claude does):
-  `<sanitized-cwd>/chats/<sessionId>/subagents/agent-<id>.jsonl`. Phase-0
-  didn't confirm whether Qwen actually writes these — **if they exist,
-  follow Claude's pattern and skip them in the synchronizer** to avoid
-  clobbering the parent row.
+  `<sanitized-cwd>/chats/<sessionId>/subagents/agent-<id>.jsonl`. Skip in
+  the synchronizer to mirror Claude's rationale (subagent rows would
+  clobber the parent).
 - **Settings + auth:** `~/.qwen/settings.json` (no `.credentials.json` —
   Qwen 0.19.7 removed `qwen auth`; auth via env vars or direct JSON edit).
 
-### Chokidar watcher
+### 10.2 Chokidar watcher
 
-`server/modules/providers/services/sessions-watcher.service.ts` registers
-chokidar with `{ interval: 6000, usePolling: true, depth: 6 }` over
-`~/.qwen/projects/`, filtering to `.jsonl` files. Qwen joins `PROVIDER_WATCH_PATHS`
-at Phase 7 of the roadmap. On each `add`/`change`:
+`sessions-watcher.service.ts` registers chokidar with
+`{ interval: 6000, usePolling: true, depth: 6 }` over `~/.qwen/projects/`,
+filtering to `.jsonl` files. On each `add`/`change`:
 
 - `sessionSynchronizerService.synchronizeProviderFile('qwen', filePath)` →
   `QwenSessionSynchronizer.synchronizeFile`.
 - After change-debouncing (max 500 ms, max-wait 2 s) the gateway emits
   `session_upserted` WebSocket events to all connected clients.
 
-### Qwen-session-synchronizer specifics
+### 10.3 QwenSessionSynchronizer specifics
 
 - `synchronize(since?)`: recursive scan from `~/.qwen/projects/`, restricted
   to `…/<sanitized-cwd>/chats/*.jsonl`. Skip subagent paths.
 - `synchronizeFile(filePath)`: process a single JSONL.
-- `processSessionFile`: extract `session_id` + `cwd` from the first JSONL
-  entry, resolve the display name (Phase 0.5 must confirm whether Qwen
-  writes a `history.jsonl` analogue — if not, fall back to scanning the end
-  of the JSONL for a `user` or `result` event).
-- Default name if neither yields anything: `'Untitled Qwen Session'`.
-- Session-id resolution: checks `sessionsDb.getSessionByProviderSessionId(parsed.sessionId)`
-  first (provider-native → app id), then `sessionsDb.getSessionById`.
+- `processSessionFile`: extract `sessionId` + `cwd` from the first JSONL entry
+  with a valid `cwd` field. (The first entry is usually a `system` row; we
+  scan until we find a row that has both `sessionId` and `cwd`.)
+- Default name fallback: `normalizeSessionName(firstUserMessage, 'Untitled Qwen Session')`.
 
-### What the user sees in the UI (silent-drop UX)
+### 10.4 JSONL re-read path (history fetch)
 
-**The flow the user actually experiences when they run `qwen` in a
-terminal while CloudCLI is open:**
+When the user clicks a Qwen session in the sidebar, the chat composer calls
+`/api/providers/sessions/:id/messages`, which routes through
+`sessions.service.ts#fetchHistory` → `QwenSessionsProvider#fetchHistory`.
+
+`fetchHistory` walks the JSONL file and calls `normalizeMessage` for each
+line. **This re-reads the file from disk and runs the full normalization
+pipeline** — same code path as the streaming live events. This is by
+design: the on-disk JSONL is the source of truth for what was said, and
+the streaming events are just the wire-protocol for it.
+
+Critical: the history parser must handle the same `parts[] + thought: true`
+shape as the streaming parser. The earlier bug — where the assistant message
+was being silently dropped on history load — was caused by
+`extractAssistantText` only reading `content[]` (the Anthropic-style shape),
+missing the `parts[]` shape entirely. See § 7.2 for the fix.
+
+### 10.5 What the user sees in the UI (silent-drop UX)
+
+The flow when the user runs Qwen while CloudCLI is open:
 
 1. User runs `qwen` in a shell on `/path/to/cwd`.
-2. Qwen writes a JSONL entry to
-   `~/.qwen/projects/<sanitized-cwd>/chats/<session-id>.jsonl` within
-   the first tool call (or first user message).
+2. Qwen writes JSONL entries to
+   `~/.qwen/projects/<sanitized-cwd>/chats/<session-id>.jsonl` within the
+   first tool call (or first user message).
 3. CloudCLI's chokidar polling (6 s) picks up the new file, debounces
    500 ms, and broadcasts `session_upserted` over WebSocket to all
    connected clients.
-4. The frontend handler (`useProjectsState.ts:592-712`) does **three
-   things automatically, with no user-visible prompt**:
-   - Calls `projectsDb.createProjectPath(<cwd>)` — the **project is
-     materialized in the DB and the sidebar even if no other Qwen
-     session for that cwd existed**.
-   - Prepends the new session to `project.sessions` so it shows at
-     the top of the list.
-   - Marks `externalMessageUpdate` if the session happens to be the
-     currently open one (triggers a `refreshFromServer` of the last
-     20 messages).
+4. The frontend handler does three things automatically:
+   - Calls `projectsDb.createProjectPath(<cwd>)` — materializes the project
+     in the DB and the sidebar even if no other Qwen session for that cwd
+     existed.
+   - Prepends the new session to `project.sessions`.
+   - Marks `externalMessageUpdate` if the session is the currently open one
+     (triggers a `refreshFromServer` of the last 20 messages).
 
-**There is no toast, banner, badge "NEW", slide-in animation, sound,
-or push notification.** The session appears silently. The only
-visible cue is the pulsing green dot on the sidebar row (because
-`lastActivity < 10 min` — see `SidebarSessionItem.tsx:83-145`), which
-is identical to what any active session looks like.
+**There is no toast, banner, badge "NEW", slide-in animation, sound, or
+push notification.** The session appears silently. The only visible cue is
+the pulsing green dot on the sidebar row (`lastActivity < 10 min`).
 
-`messageCount` in the upsert payload is hard-coded to `0`
-(`sessions-watcher.service.ts:168`) — the numeric badge next to the
-session title does not appear until the user clicks the session,
-which triggers `GET /api/providers/sessions/:id/messages` and the
-`fetchHistory` provider call.
+### 10.6 When the UI does NOT show a Qwen session
 
-### When the UI does NOT show a Qwen session
+The synchronizer silently drops a file when:
 
-The synchronizer silently drops a file in any of these conditions:
-
-- The JSONL parse fails or yields no `session_id`.
-- The cwd cannot be resolved (Qwen doesn't write `cwd` in the first
-  record — Phase 0.5 must verify this).
-- The file lives under a `subagents/` path (intentional, see Claude's
-  rationale at `claude-session-synchronizer.provider.ts:28-37`).
-- The session row is archived (`isArchived = 1`) — the watcher skips
-  the WS broadcast but the row remains in the DB.
+- The JSONL parse fails or yields no `sessionId`.
+- The `cwd` cannot be resolved (no row in the JSONL has `cwd`).
+- The file lives under a `subagents/` path (intentional).
+- The session row is archived (`isArchived = 1`) — the watcher skips the WS
+  broadcast but the row remains in the DB.
 
 There is no error surface in the UI for any of these.
 
-### Difference from other providers
+### 10.7 Difference from other providers
 
-| Provider | Watch root | Native storage | Subagent handling | Drop conditions |
-|---|---|---|---|---|
-| **Claude** | `~/.claude/projects` | JSONL (mutating view) | `subagents/` skipped explicitly | no `sessionId` in first record |
-| **Codex** | `~/.codex/sessions` | JSONL | not addressed | no `payload.id` in first record |
-| **Cursor** | `~/.cursor/projects` | JSONL + `worker.log` | not addressed | **no `workspacePath=` in `worker.log`** (silent drop) |
-| **Gemini** | `~/.gemini/tmp/**/chats/` | JSONL | not addressed | no `projectPath` resolved (3-level fallback) |
-| **OpenCode** | `~/.local/share/opencode` | shared SQLite (read-only) | not applicable (single DB) | `time_archived IS NOT NULL` in SQL |
-| **Qwen** | `~/.qwen/projects` | JSONL | mirror Claude (skip `subagents/`) | TBD by Phase 0.5 (cwd resolution, title fallback) |
+| Provider | Watch root | Native storage | Subagent handling |
+|---|---|---|---|
+| Claude | `~/.claude/projects` | JSONL | `subagents/` skipped explicitly |
+| Codex | `~/.codex/sessions` | JSONL | not addressed |
+| Cursor | `~/.cursor/projects` | JSONL + `worker.log` | not addressed |
+| Gemini | `~/.gemini/tmp/**/chats/` | JSONL | not addressed |
+| OpenCode | `~/.local/share/opencode` | shared SQLite | n/a |
+| **Qwen** | `~/.qwen/projects` | JSONL | mirror Claude (skip `subagents/`) |
 
-### Known gaps (shared with all providers)
+### 10.8 Race-window de-dupe (creates vs assigns)
 
-These limitations exist today and Qwen inherits them by default —
-they're listed here so the integration plan doesn't accidentally
-promise them:
+The session gateway creates an app-allocated row first
+(`createAppSession` → `provider_session_id IS NULL`), the qwen CLI writes
+the transcript on disk, the watcher polls it (6 s default) and the
+chat-run-registry's `assignProviderSessionId` lands later. Without
+de-duplication, that race creates two rows per chat:
 
-1. **No WS replay on reconnect.** If the WebSocket drops and
-   reconnects after a long gap, `session_upserted` events emitted
-   during the gap are lost. The sidebar shows the last-known state
-   only. The reconnect event does not trigger a full `fetchProjects()`
-   re-fetch.
-2. **No `unlink` reconciliation.** Deleting a JSONL on disk does
-   not remove or archive the row. The session stays in the sidebar
-   until the user manually archives it.
-3. **No incremental rescan timer.** `synchronizeSessions()` (full
-   rescan) runs only at boot. If chokidar misses a change (rare,
-   but possible under heavy filesystem load), the row stays stale
-   until the next PM2 restart.
-4. **No `provider` index on `sessions` table.** The `sessions` schema
-   has indices on `session_id`, `provider_session_id`, `project_path`,
-   and `isArchived` — but not on `provider`. A filter by
-   `WHERE provider = 'qwen'` does a full scan + sort. Out of scope
-   for the MVP but worth filing.
-5. **In-app notification channel is a no-op.** The frontend
-   `channels.inApp` preference defaults to `true` in
-   `useSettingsController.ts:121-133`, but
-   `notification-orchestrator.service.js:210-223` only emits `webPush`
-   and `desktop` — there is no toast on session discovery.
-6. **OpenCode-style race** is partially mitigated in OpenCode only
-   (via `assignProviderSessionId` + `findLatestPendingAppSession`).
-   Qwen's behavior when the synchronizer indexes a session before
-   the WS runtime reports the provider id is **TBD** — Phase 0.5
-   should confirm whether the `chat-run-registry.service.ts`
-   path is exercised for Qwen or whether the synchronizer can
-   create phantom rows.
+- **Race order A (common)** — watcher wins: `createSession(B)` finds no
+  row with `provider_session_id=B`, INSERTs a new row keyed by the
+  provider-native id. `assignProviderSessionId(A, B)` then sets `A`'s
+  `provider_session_id=B`. The DB ends up with **two** rows for the same
+  conversation.
+- **Race order B (rare)** — chat-run-registry wins: `createSession(B)`
+  finds `A` by `provider_session_id` (now populated), UPDATEs in place.
+  Single row, as intended.
 
-### Wire-up snippet (Phase 7 of the roadmap)
+Mitigation: `sessionsDb.createSession` does a 60-second de-dupe check
+before the INSERT — if a recent row exists for the same
+`(provider, project_path)` tuple with `provider_session_id IS NULL`,
+the provider-native id is bound to that row via UPDATE instead of
+INSERT. Window size of 60 s was chosen as a comfortable multiple of the
+6 s polling interval. Implementation in
+`server/modules/database/repositories/sessions.db.ts:118-152`.
+
+### 10.9 Wire-up snippet (already shipped)
 
 ```ts
 // server/modules/providers/services/sessions-watcher.service.ts
@@ -642,152 +791,99 @@ export const PROVIDER_WATCH_PATHS = {
   cursor:    { rootPath: '~/.cursor/projects' },
   gemini:    { rootPath: '~/.gemini/tmp' },
   opencode:  { rootPath: '~/.local/share/opencode' },
-  qwen:      { rootPath: '~/.qwen/projects' },         // NEW
+  qwen:      { rootPath: '~/.qwen/projects' },
 } as const;
-
-// isWatcherTargetFile (around line 79):
-// claude|codex|cursor → .jsonl
-// gemini → .jsonl|.json
-// opencode → basename === 'opencode.db'
-// qwen → .jsonl (mirroring claude)
 ```
 
-## 11. Implementation roadmap
+## 11. UI integration (qwen-specific deltas)
 
-12 phases, sequenced to keep each commit self-contained and reviewable.
+This section zooms in on qwen **deltas** from the shared UI surface
+documented in [`docs/providers/claude.md` → "UI integration"](./claude.md#ui-integration).
+Read that first for the shared mechanics.
 
-| Phase | Outcome |
-|---|---|
-| **0. Discovery** | User installs `npm i -g @qwen-code/qwen-code@0.19.7` in `/opt/node22/bin`. Verify `qwen --version`, `qwen --help`, `qwen mcp --help`, `qwen sessions --help`. Confirm `--output-format stream-json` + `--include-partial-messages` produces the schema in [section 5](#5-event-protocol--qwen---output-format-stream-json-shape). Confirm exact auth subcommand (`qwen login` vs alternative). Confirm whether `qwen models` exists. |
-| **1. Type unions** | `server/shared/types.ts:68` and `src/types/app.ts:1` add `'qwen'`. |
-| **2. Module backend** | 7 files new under `server/modules/providers/list/qwen/`. Mirror opencode skeleton, point each at qwen-specific paths. |
-| **3. Registry + capabilities** | `provider.registry.ts:10-16`, `provider-capabilities.service.ts:32-78` add qwen row. The `ProviderCapabilities` type at `provider-capabilities.service.ts:11` is **exhaustive** — without the qwen row, `tsc` fails. |
-| **4. Spawner** | `server/qwen-cli.js` new. NDJSON line buffer, `completeSent`, abort handler, session capture. |
-| **5. Wire spawner** | `server/index.js:117-130` adds `spawnFns.qwen` and `abortFns.qwen`. `routes/agent.js:865, 944-999` adds dispatch. |
-| **6. Token usage endpoint** | `server/index.js:1279-1605` adds `provider === 'qwen'` branch reading JSONL. |
-| **7. Watcher + search** | `sessions-watcher.service.ts:15-42, 79-89` adds qwen root. `session-conversations-search.service.ts:1143-1154` adds `parseQwenSessionMatches`. |
-| **8. Commands routes** | `routes/commands.js:18, 20-26` adds qwen. |
-| **9. Public API docs** | `public/api-docs.html:831` adds qwen to `PROVIDER_ORDER`. |
-| **10. Frontend types + state** | `src/types/app.ts:1`, `provider-auth/types.ts:13-29`, `useChatProviderState.ts`, `useChatComposerState.ts:697-706`, `ProviderSelectionEmptyState.tsx`, `ChatInterface.tsx`, `ChatMessagesPane.tsx`, `MessageComponent.tsx`, `CommandResultModal.tsx`, `useSettingsController.ts`, `AgentsSettingsTab.tsx`, `AgentListItem.tsx`, `AccountContent.tsx`, `PermissionsContent.tsx`, `AgentConnectionsStep.tsx`, `useProviderAuthStatus.ts:109`. **The `useChatProviderState.ts` hook is the biggest frontend churn** — 7 touch points per provider (state, fallback, model storage, `setStoredProviderModel`, `providers[]`, `useEffect`, return shape). |
-| **11. Logos + login + MCP + Skills** | `QwenLogo.tsx` new (~600 B SVG), `SessionProviderLogo.tsx`, `ProviderLoginModal.tsx`, `mcp/constants.ts`, `skills/view/ProviderSkills.tsx`. |
-| **12. i18n + tests** | Update 22 locale files (`{de,en,es,fr,it,ja,ko,ru,tr,zh-CN,zh-TW}/{chat,settings}.json`). Add 4 colocated tests: `qwen-mcp.test.ts`, `qwen-skills.test.ts`, `qwen-sessions.test.ts`. Bump `mcp.test.ts:344` from `5` to `6`. Add qwen block to `skills.test.ts` at lines 268, 365, 430, 494, 502, 523, 543, 571, 588, 605, 621, 637, 653-669, 707. |
+### 11.1 Header tabs
 
-### Files to touch — summary
+Provider-neutral. Qwen appears automatically once added to the chat composer
+state — no switch change needed.
 
-| Category | Count | Paths |
-|---|---|---|
-| **Backend type unions** | 2 | `server/shared/types.ts`, `src/types/app.ts` |
-| **Backend registry** | 4 | `provider.registry.ts`, `provider-capabilities.service.ts`, `session-synchronizer.service.ts`, `sessions-watcher.service.ts` |
-| **Backend switch chains** | 5 | `server/index.js` (2 spots: spawnFns + token-usage), `shell-websocket.service.ts` (2 spots), `routes/commands.js`, `session-conversations-search.service.ts` |
-| **Backend agent REST** | 1 | `routes/agent.js` |
-| **Backend public API docs** | 1 | `public/api-docs.html` |
-| **NEW module files** | 7 | `server/modules/providers/list/qwen/{qwen.provider,qwen-auth,qwen-mcp,qwen-models,qwen-skills,qwen-sessions,qwen-session-synchronizer}.provider.ts` |
-| **NEW spawner** | 1 | `server/qwen-cli.js` |
-| **Frontend types/state** | 17 | see Phase 10 |
-| **Frontend logos/login/MCP/skills** | 5 | see Phase 11 |
-| **i18n locales** | 22 | `src/i18n/locales/{11 locales}/{chat,settings}.json` |
-| **Tests NEW** | 4 | colocated qwen-*.test.ts |
-| **Tests update** | 2 | `mcp.test.ts`, `skills.test.ts` |
-| **Total backend** | ~22 new/touched | |
-| **Total frontend** | ~44 new/touched | |
-| **Total tests** | 6 files | |
+### 11.2 Chat tab — `useChatProviderState.ts`
 
-## 12. UI integration (qwen-specific deltas)
+The heaviest frontend file for provider integration:
 
-This section zooms in on qwen **deltas** from the shared UI surface documented
-in [`docs/providers/claude.md` → "UI integration"](./claude.md#ui-integration).
-Read that first for the shared mechanics (provider-neutral sidebar, capability
-matrix dispatch, model storage, login modal mechanics).
+- `FALLBACK_DEFAULT_MODEL` (line 12-17) → `qwen: 'qwen3-coder-plus'`.
+- `FALLBACK_PERMISSION_MODES` (line 26-32) →
+  `qwen: ['default', 'plan', 'auto-edit', 'bypassPermissions']` (4 real modes,
+  not the original 2 — see § 1).
+- `useState` pair (line 81-95) → `qwenModel` / `setQwenModel`.
+- `setStoredProviderModel` (line 119-149) → `qwen-settings` localStorage
+  branch.
+- `providers: LLMProvider[]` (line 149) → includes `'qwen'`.
+- `useEffect` reconciliation (line 262-325) → mirror opencode branch.
+- Return shape → `qwenModel`, `setQwenModel`.
 
-### 12.1 Qwen at a glance
+### 11.3 `useChatComposerState.ts:697-706`
 
-| Concern | Value |
-|---|---|
-| Provider id | `'qwen'` |
-| Binary | `qwen` (npm `@qwen-code/qwen-code`) |
-| Engines | `node >=22.0.0` (CloudCLI pins `>=22 <23` — ✓) |
-| Default model | `qwen3-coder-plus` |
-| Auth command | **None** (`qwen auth (removed)` in 0.19.7) — auth via env vars or direct edit of `~/.qwen/settings.json` (see § 6) |
-| Permission modes | CLI: `plan`, `default`, `auto-edit`, `auto`, `yolo`. **UI first iteration:** `['default', 'bypassPermissions']` (extend later) |
-| MCP scopes | `user`, `project` (no `local`) |
-| MCP transports | `stdio`, `http`, `sse` |
-| Skill roots | `~/.qwen/skills/`, `<git-root>/.qwen/skills/` |
-| Skill command prefix | `/` |
-| Skill file format | `SKILL.md` with YAML frontmatter (`name`, `description`) |
-| Session storage | JSONL at `~/.qwen/projects/<sanitized-cwd>/chats/` |
-| Resume (per-id) | `qwen --resume <id>` |
-| Resume (last) | `qwen --continue` (analogous to `claude -c`) |
-| Sidebar dot color | `bg-red-500` (Aliyun/Qwen brand) |
-| Brand color (Tailwind) | `red` |
-| Capability subagent | ✓ |
-| Capability images | ✓ (Qwen VL models + Computer Use) |
-| Capability computer-use | ✓ (flags exist) |
-| Capability sandbox | ✓ (`--sandbox`) |
-| Capability rawReasoning | ✓ (`thinking` events) |
-| Capability sessionContinuable | ✓ (`--continue`) |
-| Capability sessionForkable | ✓ (`qwen fork --last`) |
+Add `'qwen-settings'` localStorage branch (analogue to `claude-settings`,
+`cursor-settings`).
 
-### 12.2 Sub-sections
+### 11.4 `ProviderSelectionEmptyState.tsx`
 
-#### Header tabs
-
-Qwen appears in both Chat tab and Shell tab. The header tabs are dispatching
-by provider identity in `MainContentTabSwitcher` (provider-neutral); adding
-qwen to the chat composer state makes the Chat tab work without any switch
-change.
-
-#### Chat tab
-
-`useChatProviderState.ts` (the heaviest frontend file):
-
-- `FALLBACK_DEFAULT_MODEL` (line 12-17) → add `qwen: 'qwen3-coder-plus'`.
-- `FALLBACK_PERMISSION_MODES` (line 26-32) → add
-  `qwen: ['default', 'bypassPermissions']` (first iteration).
-- `useState` pair (line 81-95) → new `qwenModel` / `setQwenModel`.
-- `setStoredProviderModel` (line 119-149) → extend with
-  `if (targetProvider === 'qwen') { ... }`.
-- `providers: LLMProvider[]` (line 149) → add `'qwen'`.
-- `useEffect` reconciliation (line 262-325) → mirror the opencode branch.
-- Return shape (line 425-448) → add `qwenModel`, `setQwenModel`.
-
-`useChatComposerState.ts:697-706` → add `'qwen-settings'` localStorage key
-branch (analogue to `claude-settings` and `cursor-settings`).
-
-`ProviderSelectionEmptyState.tsx`:
-- `PROVIDER_META` (line 26-32) → add `{ id: 'qwen', name: 'Qwen' }`.
-- `getCurrentModel` / `getProviderDisplayName` (line 75-96) → add qwen branch.
+- `PROVIDER_META` (line 26-32) → `{ id: 'qwen', name: 'Qwen' }`.
+- `getCurrentModel` / `getProviderDisplayName` (line 75-96) → qwen branch.
 - New props `qwenModel`, `setQwenModel` (line 47-52, 110-113).
-- `setModelForProvider` (line 153-172) → add qwen branch.
-- `readyPrompt` lookup (line 303-323) → add
-  `qwen: t('providerSelection.readyPrompt.qwen', { model: qwenModel })`.
+- `setModelForProvider` (line 153-172) → qwen branch.
+- `readyPrompt` lookup → `qwen: t('providerSelection.readyPrompt.qwen', { model: qwenModel })`.
 
-`ChatInterface.tsx` (line 67-75, 197-201, 286-294, 325-333, 430-438) →
-destructure `qwenModel`/`setQwenModel`, add chained ternaries for
-`messageTypes.qwen`.
+### 11.5 `MessageComponent.tsx:150-158`
 
-`ChatMessagesPane.tsx` (line 33-91, 181-190) → pass-through.
+**Critical bug fixed during integration:** the provider-label ternary did
+NOT include a `qwen` branch, so chat messages from Qwen were labeled
+"Claude" next to the Qwen logo SVG. Fixed by adding:
 
-`MessageComponent.tsx:150-158` → provider label ternary.
+```tsx
+provider === 'qwen'
+  ? t('messageTypes.qwen', { defaultValue: 'Qwen' })
+  : t('messageTypes.claude')
+```
 
-`CommandResultModal.tsx:60-66` → `PROVIDER_LABELS.qwen = 'Qwen'`.
+The `messageTypes.qwen` i18n key already existed in all 11 locales (verified)
+— the bug was purely in the JSX ternary. The `defaultValue: 'Qwen'` mirrors
+the `opencode` branch as a defensive fallback.
 
-#### Shell / CLI tab
+The same bug existed in `ChatInterface.tsx:287-297` (the
+`selectedProviderLabel` ternary for the no-project landing page) — fixed
+in the same commit.
 
-`shell-websocket.service.ts:132-171` (`buildShellCommand`) → add:
+### 11.6 `SessionProviderLogo.tsx`
+
+Chained lookup at top:
+
+```tsx
+if (provider === 'qwen') return <QwenLogo />;
+```
+
+`QwenLogo.tsx` is the official Alibaba Qwen mark, faithful to the CLI's
+ASCII output.
+
+### 11.7 Shell / CLI tab
+
+`shell-websocket.service.ts:132-171` (`buildShellCommand`):
+
 ```ts
 if (provider === 'qwen') {
   if (resumeSessionId) return `qwen --resume "${resumeSessionId}" || qwen`;
   return 'qwen';
 }
 ```
-Plus chained `providerName` ternary at line 474-484 (`provider === 'qwen' ? 'Qwen' : …`).
 
-#### Sidebar left sessions list
+Plus chained `providerName` ternary at line 474-484.
+
+### 11.8 Sidebar left sessions list
 
 Provider-neutral. `SidebarSessionItem` automatically renders
 `<SessionProviderLogo provider="qwen" />` once the icon file exists.
 
-#### Auth-status surface
+### 11.9 Auth-status surface
 
 - `provider-auth/types.ts:13-29`:
   ```ts
@@ -796,293 +892,368 @@ Provider-neutral. `SidebarSessionItem` automatically renders
   createInitialProviderAuthStatusMap = { ... new Map entry for qwen };
   ```
 - `useProviderAuthStatus.ts:109` reads from the map — no direct change.
-- Server: new `/api/providers/qwen/auth/status` route serving
+- Server: `/api/providers/qwen/auth/status` route serving
   `QwenProviderAuth.getStatus()`.
 
-#### Skills panel
+### 11.10 Skills panel
 
 `src/components/skills/view/ProviderSkills.tsx:59-72`:
+
 ```ts
 PROVIDER_NAMES.qwen = 'Qwen';
 PROVIDER_SKILL_PATHS.qwen = '~/.qwen/skills/<skill-name>/SKILL.md';
 providerPath rule at L223 handles qwen (not opencode which is excluded).
 ```
 
-#### MCP panel
+### 11.11 MCP panel
 
-`src/components/mcp/constants.ts` — see [section 8](#8-mcp) for the five constants.
+`src/components/mcp/constants.ts` — see § 8 for the five constants.
 
-#### Permissions
+### 11.12 Permissions
 
-- First iteration: `FALLBACK_PERMISSION_MODES.qwen = ['default', 'bypassPermissions']`.
-- `useChatComposerState.ts` — no codex-style `plan → default` downgrade.
-  Mirrors opencode's minimal permission handling.
-- No dedicated `QwenPermissions` React component in the first iteration
-  (`PermissionsContent.tsx` already covers `ClaudePermissions`,
-  `CursorPermissions`, `CodexPermissions`, `GeminiPermissions`).
-  Add later when users need per-mode UI for plan/auto-edit/yolo.
+Four modes in `FALLBACK_PERMISSION_MODES.qwen`:
+`['default', 'plan', 'auto-edit', 'bypassPermissions']`. The first iteration
+uses a generic permission selector (no dedicated `<QwenPermissions />`
+component), which falls through to the same UI as OpenCode and Gemini.
 
-#### Icon + provider identity
+Mapping (`qwen-cli.js`):
 
-`src/components/llm-logo-provider/QwenLogo.tsx` (NEW, ~600 B SVG, red-on-white
-mark matching Aliyun brand).
+| UI value | `--approval-mode` flag |
+|---|---|
+| `default` | (no flag) |
+| `plan` | `plan` |
+| `auto-edit` | `auto-edit` |
+| `bypassPermissions` | `yolo` |
+
+### 11.13 Icon + provider identity
+
+`src/components/llm-logo-provider/QwenLogo.tsx` — the official Alibaba Qwen
+mark, faithful to the CLI's ASCII output.
 
 Update `SessionProviderLogo.tsx:1-34`:
+
 ```ts
 import { QwenLogo } from './QwenLogo';
 // chained:
 if (provider === 'qwen') return <QwenLogo />;
 ```
 
-#### Login flow
+### 11.14 Login flow
 
 `ProviderLoginModal.tsx:15-53`:
-- `getProviderCommand(provider)` → add `if (provider === 'qwen') return 'qwen login';`
-- `getProviderTitle(provider)` → add `'Qwen Code CLI Login'`.
+- `getProviderCommand(provider)` must NOT add a `qwen login` case — see § 5.4.
+- `getProviderTitle(provider)` → `'Qwen Code CLI Configuración'` (instructions,
+  not login).
 
-The shell PTY already handles interactive login via
-`StandaloneShell` (provider-neutral).
+The PTY path is unused for Qwen since there's no login verb.
 
-#### Onboarding
+### 11.15 Onboarding
 
-`AgentConnectionsStep.tsx:12-40` →
+`AgentConnectionsStep.tsx:12-40`:
 - `providerCardStyles.qwen = { connectedClassName, iconContainerClassName, loginButtonClassName }` (red palette).
 - `providerKeys` array → append `'qwen'`.
 
-#### Settings → Agents
+### 11.16 Settings → Agents
 
-- `AgentListItem.tsx:18-57` →
+- `AgentListItem.tsx:18-57`:
   ```ts
   agentConfig.qwen = { name: 'Qwen', color: 'red' };
   colorClasses.red = { dot: 'bg-red-500' };
   ```
-- `AgentsSettingsTab.tsx:23-101` →
-  - `selectedAgent` default stays `'claude'` (provider-neutral).
-  - `visibleCategories` for qwen: `['account', 'permissions', 'mcp']` only
-    (no Skills tab in first iteration — see [section 13](#13-what-is-not-in-scope)).
-    Wait — re-evaluating: opencode DOES show skills now (the previous turn
-    confirmed). qwen's skills provider is also fully implemented in our plan
-    (see [section 9](#9-skills)), so include `skills`.
-    **Final: `['account', 'permissions', 'mcp', 'skills']`.**
-  - `visibleAgents` → add `'qwen'`.
+- `AgentsSettingsTab.tsx:23-101`:
+  - `visibleCategories` for qwen: `['account', 'permissions', 'mcp', 'skills']`
+    (full set — Qwen's skills provider is fully implemented).
+  - `visibleAgents` → includes `'qwen'`.
   - `agentContextById.qwen` placeholder.
-- `AccountContent.tsx:23-66` → add qwen row in `agentConfig` record.
-- `PermissionsContent.tsx:264, 474-702` → no dedicated component for qwen in
-  first iteration; falls through to default UI.
-- `useSettingsController.ts:152-412` → add `qwenPermissions`/`onQwenPermissionsChange`
-  state pair only if needed (deferred — default UI covers it).
+- `AccountContent.tsx:23-66` → qwen row in `agentConfig` record.
+- `useSettingsController.ts:152-412` → state persistence for
+  `qwenPermissions` (currently identical to the opencode path).
 
-### 12.3 i18n keys to add
+### 11.17 i18n keys to add (already shipped in all 11 locales)
 
-en + es (mirrors in 9 other locales — de, fr, it, ja, ko, ru, tr, zh-CN, zh-TW):
+en + es natively; 9 fallback locales verbatim English per project convention:
 
 - `settings.onboarding.agents.providerTitles.qwen` → "Qwen Code"
 - `settings.onboarding.agents.status.{authenticated,unauthenticated,checking}.qwen`
 - `chat.providerSelection.readyPrompt.qwen` → "¿Qué puedo hacer por ti con {{model}}?"
-- `chat.messageTypes.qwen` → "Qwen" (display name)
+- `chat.messageTypes.qwen` → "Qwen"
 
-`s` is the default locale; mirrors must be exact.
+## 12. Real bugs found and fixed during integration
 
-## 13. Open questions (RESOLVED by Phase 0)
+These are the field-discovered issues that turned the original draft into
+the working integration. Documenting them so the next provider doesn't
+repeat them.
 
-All original 5 questions resolved against `qwen --version 0.19.7` on this host.
-The matrix below is the new baseline.
+### 12.1 `message.parts[]` not `message.content[]`
 
-| # | Question | Phase-0 answer | Section |
-|---|---|---|---|
-| 1 | Auth subcommand | **`qwen auth (removed)`** — no login verb. Auth = edit `~/.qwen/settings.json` or export env vars. | § 6 |
-| 2 | `qwen models` subcommand | **No** dynamic listing subcommand. Catalog = static `QWEN_FALLBACK_MODELS` + `settings.json#model.name`. | § 7 |
-| 3 | Event JSON shape | NDJSON with `system.init`, `assistant.{thinking,text,tool_use}`, `user.{tool_result}`, `result.{success,error}` + `stats` + `permission_denials`. Field names: `session_id` (snake_case in stream-json events), `message.content[]` array, `tool_use.input`/`tool_use.name`/`tool_use.id`. | § 5 |
-| 4 | Permission modes UI | Qwen CLI has 5 modes (probable: `plan`, `default`, `auto-edit`, `auto`, `yolo` — none documented in `--help`; need a Phase-0.5 probe). MVP first iteration: `['default', 'bypassPermissions']` mirror opencode. Auto-discover the real names via `qwen --help` long-form. | § 12.1 |
-| 5 | Brand color | Tailwind `red` (Aliyun/Qwen red-orange). Confirm with design before merge. | § 12 |
+The original parser assumed Anthropic's `content: [{type, text}]` shape.
+Qwen 0.19.x uses Gemini's `parts: [{text, thought?}]` shape. The first
+version of `extractAssistantText` returned `''` for every Qwen assistant
+row, so the assistant message was silently dropped on history load.
 
-**New questions surfaced by Phase 0 (gated "nice-to-know", not blocking):**
+**Fix:** added `parts[]` reading + `content[]` fallback in
+`collectAssistantParts`. See § 7.2.
 
-6. **`qwen serve --http-bridge`** — Stage 1 experimental daemon for real
-   interactivity (`ask_user_question`, `exit_plan_mode`). Skip in MVP; revisit
-   when stabilized.
-7. **`qwen channels` / `qwen extensions` / `qwen hooks`** — out of scope (see
-   § 14).
-8. **`qwen --safe-mode`** — useful troubleshooting flag. Surface a toggle in
-   advanced settings later.
+### 12.2 Thought parts concatenated into visible text
 
-### 13.1 Closed since the original Phase 0 doc
+Even after fixing the parser, the original `extractAssistantText` walked
+`parts[]` and only took parts without `thought: true`, joining the rest
+into one visible text. This produced a single "assistant" row that mixed
+reasoning with the visible reply.
 
-These were marked TBD/draft in earlier revisions and have since been resolved
-by live commands + Phase 0/1 work:
+**Fix:** `collectAssistantParts` returns an array of `{kind, text}`
+entries. The normalizer emits each as its own `NormalizedMessage` —
+`kind: 'thinking'` for thought parts, `kind: 'text'` for the rest. See § 7.2.
 
-- **MCP shape under `qwen mcp add`** — verified: `qwen mcp add cloudcli-minimax uvx -- minimax-coding-plan-mcp -y --env MINIMAX_API_KEY=...` writes to `~/.qwen/settings.json#mcpServers.cloudcli-minimax` with the JSON shape documented in § 8. The Qwen provider participates in `providerMcpService.addMcpServerToAllProviders` (cross-provider dispatcher) — toggling **Settings → MiniMax** ON propagates the entry to Qwen's config automatically. Toggling OFF removes it.
-- **`cloudcli-minimax` end-to-end smoke** — verified: `qwen` agent can call `mcp__MiniMax__web_search` and `mcp__MiniMax__understand_image` against the live `minimax-coding-plan-mcp` package. Tasks #109–#113 closed.
-- **Managed MCP pattern compatibility** — Qwen uses the same JSON-blob dispatcher as the other 5 providers (Claude/Codex/Cursor/Gemini/OpenCode). No Qwen-specific code in `server/modules/minimax/` is required; it reuses the cross-provider MCP service as-is.
-- **Skills tab visibility** — Qwen will participate in the Settings → Agentes → Habilidades tab once the provider facet lands in Phase 2, using the same `SkillsProvider` base class and the same per-skill enable/disable toggle that OpenCode exposes.
-- **Memory file convention** — see § 20 (`QWEN.md` with `AGENTS.md` fallback).
-- **Qwen as a managed-MCP recipient** — confirmed: Qwen is a fully participating managed-MCP sink (`cloudcli-minimax`, future managed servers like `cloudcli-browser`, etc.) via the `providerMcpService` dispatcher.
+### 12.3 `usageMetadata` discarded
 
-## 14. What is NOT in scope
+The original parser only looked at `message.usage` (Anthropic-style).
+Qwen writes `usageMetadata` at the top level of the assistant row. The
+chat UI showed no token consumption for Qwen sessions.
+
+**Fix:** the normalizer stamps `tokenUsage` on the last emitted message
+of the assistant batch when `usageMetadata` is present. See § 7.3.
+
+### 12.4 Stale localStorage model crashed the upstream proxy
+
+User had `qwen-model = 'gpt-5.5'` in localStorage (probably set during a
+different session). The hardcoded fallback catalog didn't include `gpt-5.5`
+but the runtime happily forwarded it to the MiniMax proxy, which rejected
+it with `2013 unknown model 'gpt-5.5'`. Same bug existed for Codex
+(`gpt-5.5` instead of `MiniMax-M3`).
+
+**Fix:** two-layer defense.
+1. `qwen-models.provider.ts` (and `codex-models.provider.ts`) now read
+   `settings.json#model.name` (or `~/.codex/config.toml#model`) and promote
+   it to `DEFAULT` when the fallback catalog is empty.
+2. `routes/agent.js#resolveModel` rejects any requested model that isn't in
+   the current `def.OPTIONS`, falling back to `DEFAULT`. See § 6.1.
+
+### 12.5 stderr treated as `kind:'error'`
+
+Qwen prints informational notices to stderr on every successful run (YOLO
+warning, sandbox notice, deprecation hints). The original spawner
+forwarded every stderr line as `kind: 'error'`, so the chat UI showed a
+red "Error" banner for successful runs.
+
+**Fix:** filter stderr against `Error:`, `ENOENT`, `invalid params`,
+`permission_denied` — only those become real errors. Everything else is
+`console.warn`-ed. See § 4.3.
+
+### 12.6 Exit code ≠ 0 on success
+
+Even with the stderr filter, the spawner still rejected runs that exited
+non-zero (because Qwen prints the YOLO warning before exiting). The
+notification orchestrator fired `run_failed` instead of `run_stopped`.
+
+**Fix:** track `resultSuccessSeen` — if a `result.success` frame was
+emitted on stdout, the run is successful regardless of exit code. See § 4.4.
+
+### 12.7 Duplicate sidebar rows on chat send
+
+The first send in a new session produced TWO rows in the sidebar: one from
+`registerOptimisticSession` (prepended by the frontend) and one from the
+canonical `session_upserted` (after the watcher indexed the JSONL).
+The merge logic in `useProjectsState.ts` was unreachable because it was
+placed in the `if (!existingProject)` branch but the project always
+existed (the user was already on the project page).
+
+**Fix:** deleted `registerOptimisticSession` entirely (now a no-op kept
+for backward compat with the hook signature). The `chat-run-registry`'s
+canonical upsert handles the case correctly — the watcher event + the URL
+`/session/<appId>` are enough on their own.
+
+### 12.8 "Claude" label in Qwen chats
+
+The provider-label ternary in `MessageComponent.tsx` (and
+`ChatInterface.tsx`) didn't have a `qwen` branch, so Qwen chat messages
+were labeled "Claude" next to the Qwen logo. See § 11.5.
+
+### 12.9 Broken `test-sse` MCP entry blocked Qwen startup
+
+User had manually added a fake MCP entry `test-sse` with
+`httpUrl: "https://example.com/sse"` to `~/.qwen/settings.json`. Qwen
+tried to start it at chat-spawn time, failed, and aborted the entire run
+with `MCP server(s) failed to start: test-sse`. See § 8.2.
+
+### 12.10 `-r <id>` without `-p` aborted every continuation message
+
+The first send worked because `qwen-cli.js` used `-p <text>` only. Once the
+chat-run-registry captured the provider-native session id, subsequent sends
+were dispatched as `qwen -r <providerSessionId>` with no prompt flag — and
+qwen 0.19.8 treats that as interactive mode and aborts with
+`No input provided via stdin. Input can be provided by piping data into
+gemini or using the --prompt option.` (note the gemini token in the error
+string — Qwen forked the Gemini CLI codebase).
+
+`qwen --help` documents the situation as `-p, --prompt Prompt. Appended
+to input on stdin (if any).` — `-p` is **required** when resuming, not
+optional as one might assume.
+
+**Fix:** `qwen-cli.js#spawnQwen` always appends `-p <text>` whenever the
+user supplied text, alongside `-r <id>` for resume mode. Stdin handling
+also branches on `sessionId` (open in resume, closed in fresh) — see § 4.2
+and § 4.7.
+
+### 12.11 Watcher / chat-run-registry race created a phantom "Nueva sesión" row
+
+Symptom: every new Qwen chat produced TWO rows in the sidebar — the real
+session ("hola", with `provider_session_id` populated) plus an orphan
+"Nueva sesión" row keyed by the app-allocated UUID with `provider_session_id
+= NULL` and no `jsonl_path`.
+
+Root cause: the file watcher polls every 6 s (`PROVIDER_WATCH_PATHS.qwen`)
+and calls `sessionsDb.createSession(providerNativeId, ...)` whenever it
+spots a new `.jsonl`. In the race window between `POST /api/providers/sessions`
+(creates row `session_id=A`, `provider_session_id=NULL`) and
+`assignProviderSessionId(A, B)` (sets `provider_session_id=B`), the
+watcher can land first — see the existing row by `provider_session_id=B`
+query in `createSession`, find nothing, and INSERT a second row keyed by
+the provider-native id `B`. `assignProviderSessionId` then fills the
+original row `A` with `provider_session_id=B`, leaving both rows in the
+table. The sidebar renders both as separate conversations.
+
+Claude/Cursor/Gemini don't hit this because the SDK emits the
+`session_created` event before writing the transcript in most cases (or
+the chat-run-registry assigns before the watcher polls). Qwen writes the
+transcript on the first prompt emit, so the watcher wins the race often
+enough to surface as a reproducible bug.
+
+**Fix:** `sessionsDb.createSession` now does a 60-second de-dupe window
+before the INSERT — if a recent row exists for the same
+`(provider, project_path)` tuple with `provider_session_id IS NULL`, the
+provider-native id is bound to that row via UPDATE instead of creating a
+duplicate. See `server/modules/database/repositories/sessions.db.ts:118-152`
+and § 10.9.
+
+## 13. Capabilities & UI support (Qwen row — IMPLEMENTED)
+
+This row is what `docs/providers/agente.md` mirrors. **Update in the same
+commit as any change here.**
+
+| Property | Qwen value |
+|---|---|
+| Login command | **None** (`qwen auth (removed)`) — auth via `~/.qwen/settings.json` or env vars |
+| Auth cascade | **4 sources**: `settings.json → process.env → project dotenv → global dotenv` |
+| Permission modes (UI) | `['default', 'plan', 'auto-edit', 'bypassPermissions']` (4 real modes) |
+| Permission modes (CLI) | `plan`, `default`, `auto-edit`, `yolo` (verified against qwen 0.19.8) |
+| MCP scopes | `['user', 'project']` |
+| MCP transports | `['stdio', 'http', 'sse']` |
+| `supportsPermissionRequests` | `false` (`qwen serve --http-bridge` is Stage 1 experimental) |
+| Interactive UI | **No** (raw JSON fallback for `ask_user_question` / `exit_plan_mode`) |
+| `tool_use` renderer | **Rich** (same renderers as Claude — qwen forked Claude's tool surface) |
+| Custom providers | **Yes** — multi-model via `settings.json#modelProviders.<type>[]` with custom `baseUrl` |
+| Model catalog | **Hybrid** — `settings.json#model.name` promoted to DEFAULT + static `QWEN_FALLBACK_MODELS` |
+| Streaming | **Per-frame** (NDJSON `assistant` events contain full `parts[]` of that turn — no token-level deltas) |
+| `stats` telemetry | **Yes** — `result.stats.{models,tools,files,skills}` |
+| `usageMetadata` per-row | **Yes** — top-level on assistant row, mapped to `tokenUsage` on the last emitted message |
+| Session store | Filesystem JSONL at `~/.qwen/projects/<encoded-cwd>/chats/<session-id>.jsonl` |
+| Resume flag | `-c/--continue` (boolean, latest) and `-r/--resume <id>` (string) |
+| Sandbox | `-s, --sandbox [boolean]` (qwen's own, not Claude's) |
+| `chat-recording` | `--chat-recording [boolean]` — false → `-c/-r` won't work |
+| Brand color | Tailwind `red` (Aliyun red-orange) |
+| Reasoning format | Inline `parts[]` with `thought: true` flag (NOT a separate `type:'thinking'` event) |
+| Assistant role in JSONL | `"model"` (NOT `"assistant"`) — Gemini-style terminology |
+| Managed MCP participation | **Yes** — `cloudcli-minimax` verified working, `cloudcli-browser-use` etc. compatible |
+| Skills panel | **Yes** — full Settings → Habilidades integration with per-skill enable/disable |
+| Status | **IMPLEMENTED** — production-ready, all 12 phases shipped |
+
+## 14. Out of scope
 
 - ❌ `qwen serve` HTTP daemon integration (multi-client shared agent).
 - ❌ `qwen channel` IM integration (Telegram, Discord, DingTalk, WeChat, Feishu).
 - ❌ `qwen extensions` / `--install-extension` (plugin ecosystem).
-- ❌ Computer Use UI panel (capability flag exists but no panel).
+- ❌ Real interactive prompts (`ask_user_question`, `exit_plan_mode`,
+  `permission_request`) — requires `qwen serve --http-bridge` which is
+  Stage 1 experimental in upstream Qwen. Tracked as follow-up.
+- ❌ Computer Use UI panel (capability flag exists, no panel).
 - ❌ Agent Arena UI (multi-model head-to-head).
 - ❌ Refactor of `spawnFns`/`abortFns` into `provider.registry.ts` (architectural gap, follow-up).
-- ❌ `routes/git.js` commit-message generation extension (deferred until qwen's CLI gains that feature). **Clarification:** the universal helper `ensureConventionalCommitPrefix()` in [`server/routes/git.js`](../../server/routes/git.js) already auto-prefixes any free-form commit message with `chore:` so commitlint accepts it. This applies to **all** commits made through CloudCLI's git panel, regardless of which provider is active. No qwen-specific work is required.
+- ❌ `routes/git.js` commit-message generation extension (qwen doesn't have that feature). The universal `ensureConventionalCommitPrefix()` helper already auto-prefixes free-form commit messages with `chore:` for **all** providers.
 - ❌ Cross-compat with `<cwd>/.claude/skills` and `<cwd>/.agents/skills` (qwen docs only mention `.qwen`).
 
 ## 15. Verification
 
-After all 12 phases:
+After every change to Qwen code, run:
 
 ```bash
 # Static checks
+npm run typecheck
 npm run lint
-npm run typecheck                          # exhaustive ProviderCapabilities forces build success
-npm run build:server && npm run build:client
 
 # Backend tests
-npx tsx --test server/modules/providers/tests/qwen-*.test.ts
-npx tsx --test server/modules/providers/tests/skills.test.ts
-npx tsx --test server/modules/providers/tests/mcp.test.ts
-
-# Runtime smoke test (with qwen-code installed)
-qwen --version          # exits 0
-npm run dev             # or pm2 restart cloud-cli2026
-
-# Manual UI verification:
-# - Settings → Agents → row "Qwen" appears with red dot
-# - Login → modal launches `qwen login` in PTY
-# - Chat composer shows Qwen model selector
-# - Run a prompt → NDJSON lines normalize to messages
-# - Settings → MCP Servers (qwen selected) → add/remove stdio server
-# - Settings → Skills → list ~/.qwen/skills/* paths
+cd /opt/cloud-cli2026/server && PATH=/opt/node22/bin:$PATH \
+  npx tsx --test modules/providers/tests/qwen-sessions.test.ts \
+             modules/providers/tests/qwen-models.test.ts \
+             modules/providers/tests/qwen-auth.test.ts
 ```
 
-End-to-end timing target: phase 0 takes 30 min; phases 1-9 (backend) ~2-3 days;
-phases 10-12 (frontend + i18n + tests) ~2-3 days. Total ~1 week.
+**Runtime smoke test** (with qwen-code installed):
+
+```bash
+qwen --version          # exits 0, prints 0.19.8
+pm2 restart cloud-cli2026
+```
+
+**Manual UI verification (in order):**
+
+1. Settings → Agents → row "Qwen" appears with red dot.
+2. Settings → Agents → Qwen → Habilidades tab lists skills from
+   `~/.qwen/skills/<name>/SKILL.md`.
+3. Settings → MCP Servers → Qwen tab shows the cloudcli-minimax entry (if
+   toggled on).
+4. New chat → select Qwen provider → send "hola" → reply comes back as
+   "Qwen" (not "Claude") next to the Qwen logo.
+5. Open the same chat from the sidebar → history shows the full conversation
+   (user + assistant, with reasoning block if Qwen used `thought: true`).
+6. Send a SECOND message in the same chat ("que hora y fecha tienes?") →
+   reply comes back. **Verify the sidebar still shows ONE row for the
+   session, not two** — the race-window de-dupe in
+   `sessionsDb.createSession` (see § 10.9) prevents the "Nueva sesión"
+   phantom row.
+7. Restart CloudCLI → reopen the same chat → history still loads (verified
+   against `~/.qwen/projects/-opt-cloud-cli2026/chats/*.jsonl`).
 
 ## 16. Sources
 
 - [github.com/QwenLM/qwen-code](https://github.com/QwenLM/qwen-code) — README +
-  capability comparison table (Claude Code parity)
-- [qwenlm.github.io/qwen-code-docs/en/users/configuration/auth](https://qwenlm.github.io/qwen-code-docs/en/users/configuration/auth) — auth env vars and `/auth` slash command
-- [qwenlm.github.io/qwen-code-docs/en/users/features/mcp](https://qwenlm.github.io/qwen-code-docs/en/users/features/mcp) — `mcpServers` schema, `qwen mcp add|remove|list|reconnect|approve|reject`
-- [qwenlm.github.io/qwen-code-docs/en/users/features/headless](https://qwenlm.github.io/qwen-code-docs/en/users/features/headless) — `--output-format stream-json`, `--continue`/`--resume`
-- [qwenlm.github.io/qwen-code-docs/en/users/features/skills](https://qwenlm.github.io/qwen-code-docs/en/users/features/skills) — `SKILL.md` format
-- [qwenlm.github.io/qwen-code-docs/en/users/configuration/settings](https://qwenlm.github.io/qwen-code-docs/en/users/configuration/settings) — settings.json schema
-- npm: `@qwen-code/qwen-code@0.19.7` (tarball inspection via `npm pack`)
+  capability comparison table (Claude Code parity).
+- [qwenlm.github.io/qwen-code-docs/en/users/configuration/auth](https://qwenlm.github.io/qwen-code-docs/en/users/configuration/auth) — auth env vars.
+- [qwenlm.github.io/qwen-code-docs/en/users/features/mcp](https://qwenlm.github.io/qwen-code-docs/en/users/features/mcp) — `mcpServers` schema, `qwen mcp add|remove|list`.
+- [qwenlm.github.io/qwen-code-docs/en/users/features/headless](https://qwenlm.github.io/qwen-code-docs/en/users/features/headless) — `--output-format stream-json`, `--continue`/`--resume`.
+- [qwenlm.github.io/qwen-code-docs/en/users/features/skills](https://qwenlm.github.io/qwen-code-docs/en/users/features/skills) — `SKILL.md` format.
+- [qwenlm.github.io/qwen-code-docs/en/users/configuration/settings](https://qwenlm.github.io/qwen-code-docs/en/users/configuration/settings) — settings.json schema.
+- npm: `@qwen-code/qwen-code@0.19.8` (verified live on this host 2026-07-08).
 
 ## 17. See also
 
-- [`docs/providers/claude.md`](./claude.md) — the canonical UI integration
-  reference (5 of the 12 sub-sections are shared chrome across all providers).
-- [`docs/providers/opencode.md`](./opencode.md) — the closest backend
-  precedent (CLI subprocess + NDJSON + slash-style skills).
+- [`docs/providers/claude.md`](./claude.md) — canonical UI integration
+  reference (most sub-sections are shared chrome across all providers).
+- [`docs/providers/opencode.md`](./opencode.md) — closest backend precedent
+  (CLI subprocess + NDJSON + slash-style skills).
 - [`docs/providers/gemini.md`](./gemini.md) — precedent for JSONL session
-  storage + stream-json output (qwen follows gemini's pattern for sessions).
+  storage + stream-json output. Qwen also follows Gemini's
+  `parts[]` + `role: "model"` convention.
 - [`docs/providers/codex.md`](./codex.md) — precedent for "resume last
   session" via `--continue` flag (qwen equivalent is `qwen --continue`). Also
-  precedent for the **3-source auth cascade** pattern (auth.json / config.toml /
-  env vars) — qwen follows the same shape with settings.json / env vars.
+  precedent for the **multi-source auth cascade** pattern
+  (settings.json / env vars) — qwen follows the same shape.
 - [`docs/providers/agente.md`](./agente.md) — cross-provider comparison matrix
-  + auth resolution table (qwen row is marked DRAFT). When implementation starts,
-  the qwen row of both matrices must be filled in **in the same commit**.
-- [`docs/voice.md`](../voice.md) — orthogonal voice feature (STT/TTS). No
-  qwen-specific work required; voice is provider-agnostic and proxies to any
-  OpenAI-compatible audio backend.
+  + auth resolution table (qwen row marked IMPLEMENTED). When implementation
+  changes, update the qwen row of both matrices **in the same commit**.
 - `server/modules/providers/README.md` — facet contract, registration, types.
 
-## 18. Interactive prompts UI (planned)
+## 18. Memory file convention
 
-**Phase 0 confirmation:** qwen registers `ask_user_question` and
-`exit_plan_mode` in `system.init.tools[]`, but **the CLI refuses to invoke them
-when run non-interactively**:
+Qwen CLI's `/memory` builtin opens the project's `QWEN.md` (or `AGENTS.md`
+if `QWEN.md` is not present).
 
-```
-The `ask_user_question` tool is unavailable in the current non-interactive mode.
-```
-
-This is the same first-iteration restriction as Codex (see
-[`docs/providers/codex.md`](./codex.md)): a real interactive UI requires a
-daemon mode. For qwen, the daemon is `qwen serve --http-bridge` (Stage 1
-experimental). **Out of MVP scope.**
-
-### First-iteration parity with Codex
-
-In the first iteration, qwen mirrors the **Codex pattern** — capability off,
-CLI handles permission decisions internally via spawn flags. Concretely:
-
-- `supportsPermissionRequests: false` in `provider-capabilities.service.ts`.
-- Chat composer shows `<QwenPermissions />` (a thin copy of `<CodexPermissions />`)
-  with the same three modes (`default` / `acceptEdits` / `bypassPermissions`).
-- **No** real-time interactive prompts in MVP: `ask_user_question` and
-  `exit_plan_mode` tool_use events surface as raw JSON in a `Default`
-  collapsible card (same fallback as OpenCode's `question` tool gap documented
-  in [`docs/providers/opencode.md`](./opencode.md)).
-- No `<PermissionRequestsBanner />` ever appears for qwen sessions in MVP.
-
-### Roadmap to close the gap (future work)
-
-If qwen-code later exposes a `canUseTool`-style mid-stream callback (e.g. via
-`qwen serve --http-bridge` stabilizing), the permission flow can be enabled
-the same way Claude's is:
-
-1. Add a `qwen-canUseTool`-style hook in `qwen-session-synchronizer.provider.ts`
-   that consumes `permission_request` events and produces
-   `permission_cancelled` / `permission_allowed` events.
-2. Register `QwenAskUserQuestionPanel` and `QwenPlanDisplay` in
-   `PermissionRequestsBanner.tsx` (parallel to `AskUserQuestionPanel`).
-3. Set `supportsPermissionRequests: true` in the `QwenProvider` capability
-   descriptor.
-4. Add column rows to the comparative table in `agente.md`.
-
-Out of MVP; tracked as a follow-up after `qwen serve` exits Stage 1.
-
-## 19. Capabilities & UI support (Qwen row — POST PHASE 0)
-
-**Phase 0 closed all DRAFT markers below.** This row is what `docs/providers/agente.md`
-must mirror when the qwen provider is enabled.
-
-| Property | Qwen value | Source |
-|---|---|---|
-| Login command | **None** (`qwen auth (removed)`) — auth = edit `~/.qwen/settings.json` or env vars | § 6 |
-| Auth cascade | **4 sources**: `settings.json → process.env → project dotenv → global dotenv` | § 6 |
-| Permission modes (MVP) | `['default', 'acceptEdits', 'bypassPermissions']` (mirror Codex; qwen CLI real modes `plan`, `default`, `auto-edit`, `auto`, `yolo` deferred) | § 12.1, § 18 |
-| MCP scopes | `['user', 'project']` | § 8 |
-| MCP transports | `['stdio', 'http', 'sse']` | § 8 |
-| `supportsPermissionRequests` | `false` (mirrors Codex first iteration) | § 18 |
-| Interactive UI | **No** (raw JSON fallback; `qwen serve --http-bridge` is Stage 1) | § 18 |
-| `tool_use` renderer | **Rich** (same renderers as Claude — qwen forked Claude's tool surface: `read_file`, `grep_search`, `web_fetch`, etc.) | § 5 |
-| Custom providers | **Yes** — multi-model via `settings.json#modelProviders.<type>[]` with custom `baseUrl` (verified: this host uses `anthropic → api.minimax.io`) | § 6 |
-| Model catalog | **Static** — `QWEN_FALLBACK_MODELS` (no `qwen models` subcommand in 0.19.7) | § 7 |
-| Streaming | **Per-frame** (NDJSON `assistant` events contain full `content[]` of that turn — no token-level deltas) | § 5 |
-| `stats` telemetry | **Yes** — `result.stats.{models,tools,files,skills}` free telemetry; maps to `usage` block | § 5 |
-| Session store | Filesystem JSONL at `~/.qwen/projects/<encoded-cwd>/chats/<session-id>.jsonl` (mirror Claude) | § 10 |
-| Resume flag | `-c/--continue` (boolean, latest) and `-r/--resume <id>` (string) | § 4 |
-| Sandbox | `-s, --sandbox [boolean]` (qwen's own, not Claude's) | § 4 |
-| `chat-recording` | `--chat-recording [boolean]` — false → `-c/-r` won't work | § 4 |
-| Brand color | Tailwind `red` (Aliyun red-orange) — confirm with design before merge | § 12 |
-| `tool_use` renderer | (planned) Rich (same renderers as Claude/Codex) | `toolConfigs.ts` |
-| Custom providers | (planned) Yes — multi-model like OpenCode | TBD |
-| Managed MCP participation | **Yes** — `cloudcli-minimax` verified working (Phase 0 tasks #109–#113). Qwen is a fully participating sink in the `providerMcpService` dispatcher. | § 8.1 |
-| Skills panel | (planned) Shares the `SkillsProvider` base; per-skill enable/disable toggle works out-of-the-box once Phase 2 lands (same facet pattern as OpenCode). | § 9 |
-| Status | **DRAFT — plan only** (Phase 0 doc + smoke tests closed; Phases 1–8 still pending) | `docs/providers/agente.md` |
-
-See [`docs/providers/agente.md`](./agente.md) for the full cross-provider
-comparison table and the auth resolution matrix.
-
-## 20. Memory file convention
-
-Qwen CLI's `/memory` builtin opens the project's `QWEN.md` (or `AGENTS.md` if `QWEN.md`
-is not present).
-
-- **Filename**: `QWEN.md` is the canonical Qwen-specific name; falls back to `AGENTS.md` (the cross-agent standard shared with Codex and OpenCode).
-- **Auto-loaded**: Qwen reads `<project>/QWEN.md` then `<project>/AGENTS.md` on every prompt. No multi-source cascade like Claude.
-- **UI surface**: Will be listed in the Command Palette as `/memory` with the chip `builtin` once the provider is enabled. CloudCLI lists it as-is from the provider.
-- **Symbiosis with skills**: Skills live under qwen-specific folders (`~/.qwen/skills/` and `<git-root>/.qwen/skills/`, see § 9). The memory file is independent of the skills folder.
-
-When implementation starts, the qwen row of the comparative table in
-[`docs/providers/agente.md`](./agente.md) must be updated **in the same commit**:
-- Capabilities matrix (login / permission modes / supportsPermissionRequests / interactive UI / tool_use renderer / custom providers / status).
-- Auth resolution matrix (primary source / fallbacks / custom providers).
-
-This is what the `Adding a new provider doc` section of `agente.md` mandates.
+- **Filename**: `QWEN.md` is the canonical Qwen-specific name; falls back to
+  `AGENTS.md` (the cross-agent standard shared with Codex and OpenCode).
+- **Auto-loaded**: Qwen reads `<project>/QWEN.md` then `<project>/AGENTS.md`
+  on every prompt.
+- **UI surface**: listed in the Command Palette as `/memory` with the chip
+  `builtin`. CloudCLI lists it as-is from the provider.
+- **Symbiosis with skills**: Skills live under qwen-specific folders
+  (`~/.qwen/skills/` and `<git-root>/.qwen/skills/`, see § 9). The memory
+  file is independent of the skills folder.

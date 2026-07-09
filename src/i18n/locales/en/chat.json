@@ -19,7 +19,8 @@
     "cursor": "Cursor",
     "codex": "Codex",
     "gemini": "Gemini",
-    "opencode": "OpenCode"
+    "opencode": "OpenCode",
+    "qwen": "Qwen"
   },
   "tools": {
     "settings": "Tool Settings",
@@ -91,6 +92,7 @@
     "modes": {
       "default": "Default Mode",
       "auto": "Auto Mode",
+      "autoEdit": "Auto-edit",
       "acceptEdits": "Accept Edits",
       "bypassPermissions": "Bypass Permissions",
       "plan": "Plan Mode"
@@ -163,6 +165,7 @@
       "codex": "Ready to use Codex with {{model}}. Start typing your message below.",
       "gemini": "Ready to use Gemini with {{model}}. Start typing your message below.",
       "opencode": "Ready to use OpenCode with {{model}}. Start typing your message below.",
+      "qwen": "Ready to use Qwen with {{model}}. Start typing your message below.",
       "default": "Select a provider above to begin"
     },
     "pressToSearch": "Press <kbd>{{shortcut}}</kbd> to search sessions, files, and commits"

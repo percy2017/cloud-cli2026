@@ -1,223 +1,102 @@
-// Optional voice proxy — forwards STT/TTS to an OpenAI-compatible audio backend.
+// Voice proxy — MiniMax TTS only.
 //
-// The backend is whatever the user points at: OpenAI, Groq, or a local server
-// (LocalAI / Speaches / Kokoro-FastAPI / openedai-speech / etc.). It must expose the
-// standard OpenAI audio endpoints:
-//     POST {base}/audio/transcriptions   (multipart 'file' + 'model')      -> { text }
-//     POST {base}/audio/speech           ({ model, voice, input })         -> audio bytes
+// CloudCLI ships with MiniMax as its sole voice backend. The browser never talks
+// to MiniMax directly: every TTS request hits /api/voice/tts, and when the user
+// has the "Use MiniMax for text-to-speech" toggle on (header x-voice-tts-minimax: 1)
+// the proxy delegates to minimaxService.synthesizeText(), which shells `mmx`
+// speech synthesize. The MiniMax API key lives only in app_config#minimax_settings
+// — the client never sees it.
 //
-// Config is resolved per-request from headers (set by the client's voice settings),
-// falling back to server env defaults. Mounted at /api/voice behind authenticateToken.
-import { Readable } from 'node:stream';
+// STT (push-to-talk dictation) is currently disabled: MiniMax does not document
+// a transcription endpoint, and we do not ship any other STT backend. /transcribe
+// always returns 503 so the mic button stays hidden until a backend is wired.
+//
+// Mounted at /api/voice behind authenticateToken.
 
 import express from 'express';
 
-const ENV = {
-  baseUrl: (process.env.VOICE_API_BASE_URL || '').replace(/\/$/, ''),
-  apiKey: process.env.VOICE_API_KEY || '',
-  sttModel: process.env.VOICE_STT_MODEL || 'whisper-1',
-  ttsModel: process.env.VOICE_TTS_MODEL || 'tts-1',
-  ttsVoice: process.env.VOICE_TTS_VOICE || 'alloy',
-};
-
-/**
- * Resolve the voice backend config for a request. Client headers (set from the
- * user's in-app voice settings) take precedence over the server env defaults.
- * @param {import('express').Request} req
- * @returns {{baseUrl: string, apiKey: string, sttModel: string, ttsModel: string, ttsVoice: string, ttsFormat: string}}
- */
-function resolveConfig(req) {
-  const h = req.headers;
-  return {
-    // Security: do not allow clients to control the outbound backend host.
-    // Always use the server-side configured base URL.
-    baseUrl: ENV.baseUrl,
-    apiKey: String(h['x-voice-api-key'] || '') || ENV.apiKey,
-    sttModel: String(h['x-voice-stt-model'] || '') || ENV.sttModel,
-    ttsModel: String(h['x-voice-tts-model'] || '') || ENV.ttsModel,
-    ttsVoice: String(h['x-voice-tts-voice'] || '') || ENV.ttsVoice,
-    ttsFormat: String(h['x-voice-tts-format'] || '').trim(),
-  };
-}
+import { minimaxService } from './modules/minimax/index.js';
 
 const router = express.Router();
 
-// Generous by default — local TTS can synthesize long messages at ~real-time on CPU.
-// Guard against a non-numeric/zero override that would make setTimeout fire immediately.
-const DEFAULT_VOICE_TIMEOUT_MS = 300000;
-const _parsedTimeout = Number(process.env.VOICE_TIMEOUT_MS);
-const VOICE_TIMEOUT_MS = Number.isFinite(_parsedTimeout) && _parsedTimeout > 0
-  ? _parsedTimeout
-  : DEFAULT_VOICE_TIMEOUT_MS;
-
 /**
- * fetch() with an AbortController timeout so a stalled backend can't hold the
- * request open indefinitely. Aborts after VOICE_TIMEOUT_MS.
- * @param {string} url
- * @param {RequestInit} [options]
- * @returns {Promise<Response>}
+ * Map the TTS format string (mp3/pcm/flac/wav/opus) to a Content-Type the
+ * browser recognises. Falls back to audio/mpeg (covers `mp3`).
+ * @param {string} format
+ * @returns {string}
  */
-async function fetchWithTimeout(url, options = {}) {
-  const parsed = new URL(url);
-  if (!['http:', 'https:'].includes(parsed.protocol) || !isAllowedBackendUrl(parsed.origin)) {
-    throw new Error('Blocked outbound voice backend URL');
-  }
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), VOICE_TIMEOUT_MS);
-  try {
-    return await fetch(parsed.toString(), { redirect: 'manual', ...options, signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
+function contentTypeFor(format) {
+  const f = String(format || '').trim().toLowerCase();
+  if (f === 'wav') return 'audio/wav';
+  if (f === 'flac') return 'audio/flac';
+  if (f === 'pcm' || f === 'pcmu_raw' || f === 'pcmu_wav') return 'audio/L16';
+  if (f === 'opus') return 'audio/ogg; codecs=opus';
+  return 'audio/mpeg';
 }
 
 /**
- * Turn a backend fetch failure into a clear, actionable client response:
- * 504 on timeout (AbortError), 502 otherwise.
- * @param {import('express').Response} res
- * @param {Error} e
+ * GET /api/voice/health -> { configured }.
+ * True when MiniMax TTS is enabled and a non-default config is resolvable.
+ * Drives `useVoiceAvailable` on the client.
  */
-function backendError(res, e) {
-  if (e && e.name === 'AbortError') {
-    return res.status(504).json({
-      error: `Voice backend timed out after ${Math.round(VOICE_TIMEOUT_MS / 1000)}s. Check your voice backend.`,
-    });
-  }
-  return res.status(502).json({ error: `Voice backend unreachable: ${e.message}` });
-}
-
-/**
- * SSRF guard for the user-configurable backend URL: allow http/https only and
- * block the link-local / cloud-metadata range (169.254.x). localhost and private
- * ranges are allowed on purpose so users can point at a local voice server
- * (LocalAI, Speaches, Kokoro-FastAPI, etc.).
- * @param {string} raw
- * @returns {boolean}
- */
-function isAllowedBackendUrl(raw) {
-  let u;
+router.get('/health', async (_req, res) => {
   try {
-    u = new URL(raw);
+    const cfg = await minimaxService.getTtsConfig();
+    res.json({ configured: Boolean(cfg) });
   } catch {
-    return false;
+    res.json({ configured: false });
   }
-  if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
-  if (u.hostname === '169.254.169.254' || u.hostname.startsWith('169.254.')) return false;
-  return true;
-}
-
-/**
- * Relay an upstream (backend) error to the client without making an upstream
- * 401/403 look like the user's own app login failed.
- * @param {import('express').Response} res
- * @param {number} status
- * @param {string} [text]
- */
-function upstreamError(res, status, text) {
-  if (status === 401 || status === 403) {
-    return res.status(502).json({ error: 'Voice backend rejected the request (check the API key).' });
-  }
-  return res.status(status).json({ error: text || 'voice backend error' });
-}
-
-let _upload = null;
-/**
- * Lazily build a memory-storage multer instance (25 MB cap) for audio uploads,
- * so multer is only imported when the voice feature is actually used.
- * @returns {Promise<import('multer').Multer>}
- */
-async function getUpload() {
-  if (!_upload) {
-    const multer = (await import('multer')).default;
-    _upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
-  }
-  return _upload;
-}
-
-/**
- * Build the Authorization header for the backend, or an empty object when no
- * key is configured (e.g. a local server that needs none).
- * @param {string} apiKey
- * @returns {Record<string, string>}
- */
-function authHeader(apiKey) {
-  return apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
-}
-
-/**
- * GET /api/voice/health -> { configured } (true when a backend base URL is set).
- */
-router.get('/health', (req, res) => {
-  res.json({ configured: Boolean(resolveConfig(req).baseUrl) });
 });
 
 /**
- * POST /api/voice/transcribe (multipart 'audio') -> { text }.
- * Forwards the uploaded audio to the backend's /audio/transcriptions endpoint.
+ * POST /api/voice/transcribe. Disabled — no STT backend wired.
  */
-router.post('/transcribe', async (req, res) => {
-  const cfg = resolveConfig(req);
-  if (!cfg.baseUrl) return res.status(503).json({ error: 'No voice backend configured' });
-  if (!isAllowedBackendUrl(cfg.baseUrl)) return res.status(400).json({ error: 'Invalid voice backend URL.' });
-  const upload = await getUpload();
-  upload.single('audio')(req, res, async (err) => {
-    if (err) return res.status(400).json({ error: err.message });
-    if (!req.file) return res.status(400).json({ error: 'No audio uploaded' });
-    try {
-      const fd = new FormData();
-      fd.append(
-        'file',
-        new Blob([req.file.buffer], { type: req.file.mimetype || 'audio/webm' }),
-        req.file.originalname || 'recording.webm',
-      );
-      fd.append('model', cfg.sttModel);
-      const r = await fetchWithTimeout(`${cfg.baseUrl}/audio/transcriptions`, {
-        method: 'POST',
-        headers: authHeader(cfg.apiKey),
-        body: fd,
-      });
-      const text = await r.text();
-      if (!r.ok) return upstreamError(res, r.status, text);
-      let data;
-      try { data = JSON.parse(text); } catch { data = { text }; }
-      res.json({ text: data.text ?? '' });
-    } catch (e) {
-      backendError(res, e);
-    }
+router.post('/transcribe', (_req, res) => {
+  res.status(503).json({
+    error: 'STT not configured. MiniMax TTS only — dictation is disabled.',
   });
 });
 
 /**
  * POST /api/voice/tts { text } -> audio bytes.
- * Forwards the text to the backend's /audio/speech endpoint and streams the audio back.
+ * Requires `x-voice-tts-minimax: 1`; without it we return 503 (no other backend).
  */
 router.post('/tts', async (req, res) => {
-  const cfg = resolveConfig(req);
-  if (!cfg.baseUrl) return res.status(503).json({ error: 'No voice backend configured' });
-  if (!isAllowedBackendUrl(cfg.baseUrl)) return res.status(400).json({ error: 'Invalid voice backend URL.' });
   const text = req.body?.text;
-  if (typeof text !== 'string' || !text.trim()) return res.status(400).json({ error: 'text required' });
-  try {
-    const r = await fetchWithTimeout(`${cfg.baseUrl}/audio/speech`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeader(cfg.apiKey) },
-      body: JSON.stringify({
-        model: cfg.ttsModel,
-        voice: cfg.ttsVoice,
-        input: text,
-        ...(cfg.ttsFormat ? { response_format: cfg.ttsFormat } : {}),
-      }),
+  if (typeof text !== 'string' || !text.trim()) {
+    return res.status(400).json({ error: 'text required' });
+  }
+
+  const wantsMinimax = String(req.headers['x-voice-tts-minimax'] || '') === '1';
+  if (!wantsMinimax) {
+    return res.status(503).json({
+      error: 'TTS requires the MiniMax toggle (x-voice-tts-minimax: 1).',
     });
-    if (!r.ok) {
-      const errText = await r.text().catch(() => 'tts failed');
-      return upstreamError(res, r.status, errText);
+  }
+
+  try {
+    const cfg = await minimaxService.getTtsConfig();
+    if (!cfg) {
+      return res.status(503).json({
+        error: 'MiniMax TTS is not enabled. Configure it in Settings → MiniMax.',
+      });
     }
-    res.setHeader('Content-Type', r.headers.get('content-type') || 'audio/mpeg');
+    const voiceOverride = String(req.headers['x-voice-tts-minimax-voice'] || '').trim();
+    const { audio, format } = await minimaxService.synthesizeText({
+      text,
+      ...(voiceOverride ? { voice: voiceOverride } : {}),
+    });
+    res.setHeader('Content-Type', contentTypeFor(format));
+    res.setHeader('Content-Length', String(audio.length));
     res.setHeader('Cache-Control', 'no-store');
-    if (!r.body) return res.end();
-    Readable.fromWeb(r.body).on('error', (error) => res.destroy(error)).pipe(res);
+    return res.end(audio);
   } catch (e) {
-    backendError(res, e);
+    const msg = e instanceof Error ? e.message : 'minimax tts failed';
+    if (msg.includes('10000 character limit')) {
+      return res.status(413).json({ error: msg });
+    }
+    console.error('[Voice] MiniMax TTS error:', msg);
+    return res.status(502).json({ error: `MiniMax TTS failed: ${msg}` });
   }
 });
 

@@ -42,6 +42,10 @@ import {
     spawnOpenCode,
     abortOpenCodeSession,
 } from './opencode-cli.js';
+import {
+    spawnQwen,
+    abortQwenSession,
+} from './qwen-cli.js';
 import sessionManager from './sessionManager.js';
 import {
     stripAnsiSequences,
@@ -121,6 +125,7 @@ const wss = createWebSocketServer(server, {
             codex: queryCodex,
             gemini: spawnGemini,
             opencode: spawnOpenCode,
+            qwen: spawnQwen,
         },
         abortFns: {
             claude: abortClaudeSDKSession,
@@ -128,6 +133,7 @@ const wss = createWebSocketServer(server, {
             codex: abortCodexSession,
             gemini: abortGeminiSession,
             opencode: abortOpenCodeSession,
+            qwen: abortQwenSession,
         },
         resolveToolApproval,
         getPendingApprovalsForSession,
@@ -1429,6 +1435,19 @@ app.get('/api/projects/:projectId/sessions/:sessionId/token-usage', authenticate
             } finally {
                 db.close();
             }
+        }
+
+        // Handle Qwen sessions — JSONL transcripts, no token usage parsed yet
+        if (provider === 'qwen') {
+            return res.json({
+                used: 0,
+                total: 0,
+                inputTokens: 0,
+                outputTokens: 0,
+                breakdown: { input: 0, output: 0 },
+                unsupported: true,
+                message: 'Token usage tracking not yet implemented for Qwen sessions'
+            });
         }
 
         // Handle Codex sessions

@@ -161,6 +161,13 @@ function buildShellCommand(
     return initialCommand || 'opencode';
   }
 
+  if (provider === 'qwen') {
+    if (resumeSessionId) {
+      return `qwen --resume "${resumeSessionId}"`;
+    }
+    return initialCommand || 'qwen';
+  }
+
   const command = initialCommand || 'claude';
   if (resumeSessionId) {
     if (os.platform() === 'win32') {
@@ -481,6 +488,8 @@ export function handleShellConnection(
                   ? 'Gemini'
                   : provider === 'opencode'
                     ? 'OpenCode'
+                    : provider === 'qwen'
+                      ? 'Qwen'
                   : 'Claude';
           welcomeMsg = hasSession && resumeSessionId
             ? `\x1b[36mResuming ${providerName} session ${resumeSessionId} in: ${projectPath}\x1b[0m\r\n`

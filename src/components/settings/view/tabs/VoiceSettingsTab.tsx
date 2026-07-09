@@ -1,22 +1,16 @@
-import type { InputHTMLAttributes } from 'react';
 import { useTranslation } from 'react-i18next';
 import SettingsSection from '../SettingsSection';
 import SettingsToggle from '../SettingsToggle';
 import { useUiPreferences } from '../../../../hooks/useUiPreferences';
 import { useVoiceConfig } from '../../../../hooks/useVoiceConfig';
+import { MINIMAX_VOICE_GROUPS } from './minimax-voices';
 
-const inputClass =
-  'w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring';
+const selectClass =
+  'w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-60';
 
-function Field({ label, ...props }: { label: string } & InputHTMLAttributes<HTMLInputElement>) {
-  return (
-    <label className="block space-y-1">
-      <span className="text-sm font-medium text-foreground">{label}</span>
-      <input className={inputClass} {...props} />
-    </label>
-  );
-}
-
+// Voice module: TTS goes through MiniMax only. STT (push-to-talk dictation)
+// is currently disabled because MiniMax does not document a transcription
+// endpoint — the mic button stays hidden until a backend is wired.
 export default function VoiceSettingsTab() {
   const { t } = useTranslation('settings');
   const { preferences, setPreference } = useUiPreferences();
@@ -40,50 +34,81 @@ export default function VoiceSettingsTab() {
       </SettingsSection>
 
       {voiceEnabled && (
-        <SettingsSection title={t('voiceSettings.backendTitle')} description={t('voiceSettings.backendDescription')}>
+        <SettingsSection
+          title={t('voiceSettings.minimaxTtsTitle')}
+          description={t('voiceSettings.minimaxTtsDescription')}
+        >
           <div className="space-y-4">
-            <Field
-              label={t('voiceSettings.baseUrl')}
-              placeholder="https://api.openai.com/v1"
-              value={config.baseUrl}
-              onChange={(e) => update({ baseUrl: e.target.value })}
-            />
-            <Field
-              label={t('voiceSettings.apiKey')}
-              type="password"
-              autoComplete="off"
-              placeholder="sk-…"
-              value={config.apiKey}
-              onChange={(e) => update({ apiKey: e.target.value })}
-            />
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
-              <Field
-                label={t('voiceSettings.sttModel')}
-                placeholder="whisper-1"
-                value={config.sttModel}
-                onChange={(e) => update({ sttModel: e.target.value })}
-              />
-              <Field
-                label={t('voiceSettings.ttsModel')}
-                placeholder="tts-1"
-                value={config.ttsModel}
-                onChange={(e) => update({ ttsModel: e.target.value })}
-              />
-              <Field
-                label={t('voiceSettings.voice')}
-                placeholder="alloy"
-                value={config.ttsVoice}
-                onChange={(e) => update({ ttsVoice: e.target.value })}
-              />
-              <Field
-                label={t('voiceSettings.format')}
-                placeholder="mp3"
-                value={config.ttsFormat}
-                onChange={(e) => update({ ttsFormat: e.target.value })}
+            <div className="flex items-center justify-between rounded-lg border border-border p-3">
+              <div className="pr-3">
+                <div className="text-sm font-medium text-foreground">{t('voiceSettings.minimaxTtsEnable')}</div>
+                <div className="text-xs text-muted-foreground">{t('voiceSettings.minimaxTtsEnableDescription')}</div>
+              </div>
+              <SettingsToggle
+                checked={config.ttsUseMinimax}
+                onChange={(v) => update({ ttsUseMinimax: v })}
+                ariaLabel={t('voiceSettings.minimaxTtsEnable')}
               />
             </div>
-            <p className="text-xs text-muted-foreground">{t('voiceSettings.note')}</p>
+            <label className="block space-y-1">
+              <span className="text-sm font-medium text-foreground">
+                {t('voiceSettings.minimaxTtsVoice')}
+              </span>
+              <select
+                className={selectClass}
+                value={config.ttsMinimaxVoice}
+                onChange={(e) => update({ ttsMinimaxVoice: e.target.value })}
+                disabled={!config.ttsUseMinimax}
+              >
+                {/* Empty option = use whatever the user previously typed (or the
+                    server-side default if blank). We keep this so a custom voice
+                    that the user wrote before this selector shipped stays valid. */}
+                <option value="">
+                  {t('voiceSettings.minimaxTtsVoiceDefault', {
+                    defaultValue: '— Predeterminado del servidor —',
+                  })}
+                </option>
+                {MINIMAX_VOICE_GROUPS.map((group) => (
+                  <optgroup key={group.label} label={group.label}>
+                    {group.voices.map((voice) => (
+                      <option key={voice.id} value={voice.id}>
+                        {voice.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            </label>
+            <p className="text-xs text-muted-foreground">{t('voiceSettings.minimaxTtsNote')}</p>
           </div>
+
+          {/* Auto-play the last assistant message aloud. Disabled until the user
+              has actually opted in to MiniMax TTS — no point auto-playing
+              through a backend they aren't using. */}
+          {config.ttsUseMinimax && (
+            <div className="flex items-center justify-between rounded-lg border border-border p-3">
+              <div className="pr-3">
+                <div className="text-sm font-medium text-foreground">
+                  {t('voiceSettings.ttsAutoPlayTitle', {
+                    defaultValue: 'Reproducir automáticamente la última respuesta',
+                  })}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {t('voiceSettings.ttsAutoPlayDescription', {
+                    defaultValue:
+                      'Cuando llegue una respuesta nueva del asistente, se lee en voz alta sin que toques nada.',
+                  })}
+                </div>
+              </div>
+              <SettingsToggle
+                checked={config.ttsAutoPlay}
+                onChange={(v) => update({ ttsAutoPlay: v })}
+                ariaLabel={t('voiceSettings.ttsAutoPlayTitle', {
+                  defaultValue: 'Reproducir automáticamente la última respuesta',
+                })}
+              />
+            </div>
+          )}
         </SettingsSection>
       )}
     </div>

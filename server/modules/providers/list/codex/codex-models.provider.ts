@@ -22,6 +22,7 @@ import {
 export const CODEX_FALLBACK_MODELS: ProviderModelsDefinition = {
   OPTIONS: [
     { value: 'gpt-5.5', label: 'gpt-5.5' },
+    { value: 'MiniMax-M3', label: 'MiniMax-M3' },
     { value: 'gpt-5.4', label: 'gpt-5.4' },
     { value: 'gpt-5.4-mini', label: 'gpt-5.4-mini' },
     { value: 'gpt-5.3-codex', label: 'gpt-5.3-codex' },
@@ -57,7 +58,55 @@ const mapCodexModel = (model: CodexCachedModel): ProviderModelOption => ({
   description: readOptionalString(model.description),
 });
 
-const buildCodexModelsDefinition = (models: CodexCachedModel[]): ProviderModelsDefinition => {
+type CodexConfig = {
+  model: string | null;
+  modelProvider: string | null;
+};
+
+const readCodexConfig = async (): Promise<CodexConfig> => {
+  try {
+    const raw = await readFile(CODEX_CONFIG_PATH, 'utf8');
+    const parsed = readObjectRecord(TOML.parse(raw));
+    return {
+      model: readOptionalString(parsed?.model) ?? null,
+      modelProvider: readOptionalString(parsed?.model_provider) ?? null,
+    };
+  } catch {
+    return { model: null, modelProvider: null };
+  }
+};
+
+const readCodexConfigModel = async (): Promise<string | null> => (await readCodexConfig()).model;
+
+const buildCodexModelsDefinition = async (models: CodexCachedModel[]): Promise<ProviderModelsDefinition> => {
+  // Read the user's `config.toml` first so we always know whether they are
+  // routing Codex through a custom provider (MiniMax, Azure, internal proxy,
+  // etc.). When that is the case, the local `models_cache.json` is poisoned:
+  // it was populated against OpenAI's `/v1/models` and every slug it contains
+  // will be rejected by the proxy with `invalid params, unknown model … (2013)`.
+  // We must therefore *ignore* the cache entirely and use `config.toml#model`
+  // as the only ground truth about what the proxy accepts.
+  const { model: configModel, modelProvider } = await readCodexConfig();
+  const hasCustomProvider = Boolean(modelProvider && modelProvider !== 'openai');
+
+  if (hasCustomProvider) {
+    const customOptions: ProviderModelOption[] = [];
+    if (configModel) {
+      customOptions.push({ value: configModel, label: configModel });
+    }
+    // Even with a custom provider, fall back to the static OpenAI list so the
+    // picker is never empty. The user can pick `gpt-5.x` if their proxy happens
+    // to forward those (Azure / vLLM often do), and the custom option stays as
+    // DEFAULT so the chat composer starts on a model we *know* the proxy likes.
+    const remainingFallback = CODEX_FALLBACK_MODELS.OPTIONS.filter(
+      (option) => option.value !== configModel,
+    );
+    return {
+      OPTIONS: [...customOptions, ...remainingFallback],
+      DEFAULT: configModel ?? CODEX_FALLBACK_MODELS.DEFAULT,
+    };
+  }
+
   const sortedModels = [...models]
     .filter((model) => model.visibility !== 'hidden' && model.supported_in_api !== false)
     .sort((left, right) => readCodexPriority(left.priority) - readCodexPriority(right.priority));
@@ -76,12 +125,29 @@ const buildCodexModelsDefinition = (models: CodexCachedModel[]): ProviderModelsD
   }
 
   if (options.length === 0) {
+    // No dynamic cache and the user is on stock OpenAI: Codex hasn't populated
+    // its cache yet. Use the static fallback list, and prefer the model the
+    // user pinned in config.toml as DEFAULT so we don't override their choice.
+    if (configModel && !seenValues.has(configModel)) {
+      return {
+        OPTIONS: [{ value: configModel, label: configModel }, ...CODEX_FALLBACK_MODELS.OPTIONS],
+        DEFAULT: configModel,
+      };
+    }
     return CODEX_FALLBACK_MODELS;
+  }
+
+  // Stock OpenAI with a populated cache: still respect the user's pinned
+  // model if it isn't already in the list — the cache can be stale.
+  if (configModel && !seenValues.has(configModel)) {
+    options.unshift({ value: configModel, label: configModel });
   }
 
   return {
     OPTIONS: options,
-    DEFAULT: options[0]?.value ?? CODEX_FALLBACK_MODELS.DEFAULT,
+    DEFAULT: configModel
+      ?? options[0]?.value
+      ?? CODEX_FALLBACK_MODELS.DEFAULT,
   };
 };
 
@@ -94,9 +160,11 @@ export class CodexProviderModels implements IProviderModels {
         ? parsed.models.filter(isCodexCachedModel)
         : [];
 
-      return buildCodexModelsDefinition(models);
+      return await buildCodexModelsDefinition(models);
     } catch {
-      return CODEX_FALLBACK_MODELS;
+      // No cache: fall through to the config-aware fallback path so the
+      // user can still pick a model their proxy actually accepts.
+      return await buildCodexModelsDefinition([]);
     }
   }
 

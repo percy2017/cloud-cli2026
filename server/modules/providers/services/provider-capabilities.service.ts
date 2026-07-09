@@ -75,6 +75,15 @@ const PROVIDER_CAPABILITIES: Record<LLMProvider, ProviderCapabilities> = {
     supportsPermissionRequests: false,
     supportsTokenUsage: true,
   },
+  qwen: {
+    provider: 'qwen',
+    permissionModes: ['default', 'plan', 'auto-edit', 'bypassPermissions'],
+    defaultPermissionMode: 'default',
+    supportsImages: false,
+    supportsAbort: true,
+    supportsPermissionRequests: false,
+    supportsTokenUsage: false,
+  },
 };
 
 /**

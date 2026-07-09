@@ -19,7 +19,8 @@
     "cursor": "Cursor",
     "codex": "Codex",
     "gemini": "Gemini",
-    "opencode": "OpenCode"
+    "opencode": "OpenCode",
+    "qwen": "Qwen"
   },
   "tools": {
     "settings": "Paramètres de l'outil",
@@ -93,7 +94,8 @@
       "auto": "Mode automatique",
       "acceptEdits": "Accepter les modifications",
       "bypassPermissions": "Contourner les permissions",
-      "plan": "Mode planification"
+      "plan": "Mode planification",
+      "autoEdit": "Auto-edit"
     },
     "descriptions": {
       "default": "Seules les commandes de confiance (ls, cat, grep, git status, etc.) s'exécutent automatiquement. Les autres commandes sont ignorées. Peut écrire dans l'espace de travail.",
@@ -155,7 +157,8 @@
       "codex": "Prêt à utiliser Codex avec {{model}}. Commencez à taper votre message ci-dessous.",
       "gemini": "Prêt à utiliser Gemini avec {{model}}. Commencez à taper votre message ci-dessous.",
       "opencode": "Prêt à utiliser OpenCode avec {{model}}. Commencez à taper votre message ci-dessous.",
-      "default": "Sélectionnez un fournisseur ci-dessus pour commencer"
+      "default": "Sélectionnez un fournisseur ci-dessus pour commencer",
+      "qwen": "Ready to use Qwen with {{model}}. Start typing your message below."
     },
     "pressToSearch": "Appuyez sur <kbd>{{shortcut}}</kbd> pour rechercher sessions, fichiers et commits"
   },

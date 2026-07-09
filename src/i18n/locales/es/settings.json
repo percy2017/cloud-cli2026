@@ -55,15 +55,14 @@
     "description": "Entrada de voz a texto y lectura en voz alta, mediante un backend de audio compatible con OpenAI.",
     "enable": "Activar voz",
     "enableDescription": "Mostrar el botón de micrófono y el botón de lectura en voz alta en los mensajes.",
-    "backendTitle": "Backend",
-    "backendDescription": "Apunta a OpenAI, Groq o un servidor local (LocalAI, Speaches, Kokoro-FastAPI). Déjalo en blanco para usar el backend predeterminado del servidor.",
-    "baseUrl": "URL base",
-    "apiKey": "Clave de API",
-    "sttModel": "Modelo de voz a texto",
-    "ttsModel": "Modelo de texto a voz",
-    "voice": "Voz",
-    "format": "Formato de audio",
-    "note": "Una URL base personalizada es llamada directamente por tu navegador y debe permitir solicitudes CORS del navegador. Déjala en blanco para usar el backend configurado en el servidor."
+    "minimaxTtsTitle": "TTS de MiniMax",
+    "minimaxTtsDescription": "Dirige el endpoint de lectura en voz alta a través de la API TTS de MiniMax (mmx speech synthesize). STT no se ve afectado.",
+    "minimaxTtsEnable": "Usar MiniMax para texto a voz",
+    "minimaxTtsEnableDescription": "Cuando está activo, el botón de lectura sintetiza audio vía MiniMax. Requiere que MiniMax esté activado en Ajustes → MiniMax.",
+    "minimaxTtsVoice": "Voz (override)",
+    "minimaxTtsNote": "Vacío significa usar la voz configurada en Ajustes → MiniMax. Requiere el CLI mmx en el PATH del servidor.",
+    "ttsAutoPlayTitle": "Reproducir automáticamente la última respuesta",
+    "ttsAutoPlayDescription": "Cuando llegue una respuesta nueva del asistente, se lee en voz alta sin que toques nada. Toca el botón 🔊 del mensaje para detenerla."
   },
   "quickSettings": {
     "title": "Ajustes rápidos",
@@ -355,6 +354,9 @@
       },
       "opencode": {
         "description": "Asistente de CLI OpenCode"
+      },
+      "qwen": {
+        "description": "Alibaba Qwen Code CLI assistant"
       }
     },
     "connectionStatus": "Estado de la conexión",
@@ -365,6 +367,12 @@
       "reAuthDescription": "Inicia sesión con otra cuenta o renueva las credenciales",
       "button": "Iniciar sesión",
       "reLoginButton": "Volver a iniciar sesión"
+    },
+    "manualSetup": {
+      "title": "Configurar Qwen manualmente",
+      "description": "Qwen 0.19.x no tiene un comando `qwen auth`. Configurá la API key directamente en tu shell:",
+      "settingsPath": "O editá el archivo:",
+      "envHint": "Variables de entorno reconocidas: OPENAI_API_KEY, ANTHROPIC_API_KEY, QWEN_API_KEY, DASHSCOPE_API_KEY"
     },
     "error": "Error: {{error}}"
   },
@@ -466,6 +474,35 @@
         "path": "~/.config/opencode/agent/<nombre-del-agente>.md"
       }
     },
+    "qwen": {
+      "permissionMode": "Modo de permiso",
+      "description": "Qwen 0.19.x soporta cuatro modos de aprobación, pasados al CLI con --approval-mode. El cambio se aplica al próximo mensaje que mandes.",
+      "modes": {
+        "default": {
+          "title": "Predeterminado",
+          "description": "Qwen pide confirmación antes de cada llamada a una herramienta. Equivalente a no pasar --approval-mode."
+        },
+        "plan": {
+          "title": "Plan",
+          "description": "Modo de solo lectura: Qwen analiza el código y propone un plan, pero no ejecuta herramientas que muten estado."
+        },
+        "autoEdit": {
+          "title": "Auto-edit",
+          "description": "Auto-aprueba ediciones de archivos (write/edit), pero pide confirmación para comandos de shell."
+        },
+        "yolo": {
+          "title": "YOLO",
+          "description": "Auto-aprueba cualquier llamada a herramienta sin pedir confirmación. Peligroso: ejecutá solo en proyectos de confianza."
+        }
+      },
+      "technicalDetails": "Detalles técnicos",
+      "technicalInfo": {
+        "default": "Qwen corre sin --approval-mode. El usuario aprueba cada llamada a herramienta de forma interactiva.",
+        "plan": "Qwen corre con --approval-mode plan. Útil para explorar sin riesgo de mutar archivos.",
+        "autoEdit": "Qwen corre con --approval-mode auto-edit. Las ediciones de archivos pasan sin confirmación.",
+        "yolo": "Qwen corre con --approval-mode yolo (o --yolo). Todas las herramientas se ejecutan sin pedir permiso."
+      }
+    },
     "actions": {
       "add": "Añadir"
     }
@@ -476,7 +513,8 @@
       "claude": "Los servidores del Model Context Protocol proporcionan herramientas y fuentes de datos adicionales a Claude",
       "cursor": "Los servidores del Model Context Protocol proporcionan herramientas y fuentes de datos adicionales a Cursor",
       "codex": "Los servidores del Model Context Protocol proporcionan herramientas y fuentes de datos adicionales a Codex",
-      "opencode": "Los servidores del Model Context Protocol proporcionan herramientas y fuentes de datos adicionales a OpenCode"
+      "opencode": "Los servidores del Model Context Protocol proporcionan herramientas y fuentes de datos adicionales a OpenCode",
+      "qwen": "Model Context Protocol servers provide additional tools and data sources to Qwen"
     },
     "addButton": "Añadir servidor MCP",
     "empty": "No hay servidores MCP configurados",
@@ -731,7 +769,8 @@
         "cursor": "Cursor",
         "codex": "OpenAI Codex",
         "gemini": "Gemini",
-        "opencode": "OpenCode"
+        "opencode": "OpenCode",
+        "qwen": "Qwen Code"
       }
     },
     "steps": {
@@ -751,18 +790,20 @@
   "api": {
     "minimax": {
       "title": "MiniMax",
-      "description": "Clave del Token Plan usada por las herramientas MCP web_search y understand_image.",
+      "description": "Lee las credenciales de la API desde el CLI `mmx` instalado en el servidor. La UI solo muestra el estado actual — administrá la clave con `mmx auth login`.",
       "loading": "Cargando…",
+      "refresh": "Actualizar",
+      "statusAuthenticated": "mmx está autenticado",
+      "statusNotAuthenticated": "mmx no está autenticado",
+      "methodLabel": "Método de autenticación",
+      "methodApiKey": "Clave de API",
+      "methodOAuth": "OAuth",
       "keyLabel": "Clave de API",
-      "keyPlaceholder": "sk-cp-...",
-      "keyHint": "Clave del Token Plan desde tu panel de MiniMax.",
       "hostLabel": "Host de la API",
-      "hostPlaceholder": "https://api.minimax.io",
-      "hostHint": "URL base de la API de MiniMax. Por defecto, el host público del Token Plan.",
-      "showKey": "Mostrar clave",
-      "hideKey": "Ocultar clave",
-      "saveButton": "Guardar",
-      "savedToast": "Credenciales de MiniMax guardadas."
+      "setupTitle": "Configurar mmx en el servidor",
+      "setupDescription": "Ejecutá estos comandos en la terminal del servidor y luego hacé clic en Actualizar.",
+      "installLabel": "Instalar mmx",
+      "loginLabel": "Iniciar sesión"
     }
   },
   "minimax": {

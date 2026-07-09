@@ -39,6 +39,7 @@ interface UseChatComposerStateArgs {
   codexModel: string;
   geminiModel: string;
   opencodeModel: string;
+  qwenModel: string;
   isLoading: boolean;
   canAbortSession: boolean;
   tokenBudget: Record<string, unknown> | null;
@@ -173,6 +174,7 @@ export function useChatComposerState({
   codexModel,
   geminiModel,
   opencodeModel,
+  qwenModel,
   isLoading,
   canAbortSession,
   tokenBudget,
@@ -336,7 +338,9 @@ export function useChatComposerState({
                 ? geminiModel
                 : provider === 'opencode'
                   ? opencodeModel
-                  : claudeModel,
+                  : provider === 'qwen'
+                    ? qwenModel
+                    : claudeModel,
           tokenUsage: tokenBudget,
         };
 
@@ -391,6 +395,7 @@ export function useChatComposerState({
       cursorModel,
       geminiModel,
       opencodeModel,
+      qwenModel,
       handleBuiltInCommand,
       handleCustomCommand,
       input,
@@ -703,7 +708,9 @@ export function useChatComposerState({
                   ? 'gemini-settings'
                   : provider === 'opencode'
                     ? 'opencode-settings'
-                  : 'claude-settings';
+                    : provider === 'qwen'
+                      ? 'qwen-settings'
+                      : 'claude-settings';
           const savedSettings = safeLocalStorage.getItem(settingsKey);
           if (savedSettings) {
             return JSON.parse(savedSettings);
@@ -729,7 +736,9 @@ export function useChatComposerState({
               ? geminiModel
               : provider === 'opencode'
                 ? opencodeModel
-                : claudeModel;
+                : provider === 'qwen'
+                  ? qwenModel
+                  : claudeModel;
 
       // One message shape for every provider. The backend resolves the
       // provider, project path, and provider-native resume id from the
@@ -774,6 +783,7 @@ export function useChatComposerState({
       executeCommand,
       geminiModel,
       opencodeModel,
+      qwenModel,
       isLoading,
       onSessionProcessing,
       onSessionEstablished,

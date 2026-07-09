@@ -178,6 +178,11 @@ export const sessionsService = {
       offset: options.offset ?? 0,
       projectPath: session.project_path ?? '',
       providerSessionId: session.provider_session_id,
+      // Indexed by the watcher — providers use this to open the transcript
+      // JSONL without having to resolve the provider-native id back to disk.
+      // Without this, providers like Qwen return `messages: []` because they
+      // have no way to locate the transcript on disk for a resumed session.
+      jsonlPath: session.jsonl_path ?? '',
     });
 
     return {

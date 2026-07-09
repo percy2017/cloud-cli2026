@@ -18,7 +18,8 @@
     "claude": "Claude",
     "cursor": "Cursor",
     "codex": "Codex",
-    "gemini": "Gemini"
+    "gemini": "Gemini",
+    "qwen": "Qwen"
   },
   "tools": {
     "settings": "도구 설정",
@@ -92,7 +93,8 @@
       "auto": "Auto Mode",
       "acceptEdits": "편집 허용",
       "bypassPermissions": "권한 우회",
-      "plan": "Plan 모드"
+      "plan": "Plan 모드",
+      "autoEdit": "Auto-edit"
     },
     "descriptions": {
       "default": "신뢰할 수 있는 명령어(ls, cat, grep, git status 등)만 자동 실행됩니다. 다른 명령어는 건너뜁니다. 워크스페이스에 쓰기 가능.",
@@ -135,7 +137,8 @@
       "cursor": "{{model}} 모델로 Cursor를 사용할 준비가 되었습니다. 아래에 메시지를 입력하세요.",
       "codex": "{{model}} 모델로 Codex를 사용할 준비가 되었습니다. 아래에 메시지를 입력하세요.",
       "gemini": "{{model}} 모델로 Gemini를 사용할 준비가 되었습니다. 아래에 메시지를 입력하세요.",
-      "default": "시작하려면 위에서 제공자를 선택하세요"
+      "default": "시작하려면 위에서 제공자를 선택하세요",
+      "qwen": "Ready to use Qwen with {{model}}. Start typing your message below."
     },
     "pressToSearch": "<kbd>{{shortcut}}</kbd>를 눌러 세션, 파일 및 커밋을 검색하세요"
   },

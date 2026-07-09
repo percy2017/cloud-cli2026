@@ -11,6 +11,7 @@ export type SaveStatus = 'success' | 'error' | null;
 export type CodexPermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions';
 export type GeminiPermissionMode = 'default' | 'auto_edit' | 'yolo';
 export type OpencodeAgent = 'build' | 'plan';
+export type QwenPermissionMode = 'default' | 'plan' | 'auto-edit' | 'bypassPermissions';
 
 export type OpencodePermissionsState = {
   agent: OpencodeAgent;
@@ -64,6 +65,7 @@ export type SettingsStoragePayload = {
   cursor: CursorPermissionsState & { lastUpdated: string };
   codex: { permissionMode: CodexPermissionMode; lastUpdated: string };
   opencode: OpencodePermissionsState & { lastUpdated: string };
+  qwen: { permissionMode: QwenPermissionMode; lastUpdated: string };
 };
 
 export type SettingsProps = {

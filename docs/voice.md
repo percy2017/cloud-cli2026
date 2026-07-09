@@ -494,6 +494,136 @@ hidden, and `POST /api/voice/{transcribe,tts}` returns 503.
   CORS by default. In that case the user must either enable CORS on the
   backend or leave `baseUrl` blank and use the proxy.
 
+## TTS via the MiniMax managed MCP
+
+The voice proxy can route TTS through the same `cloudcli-minimax` package that
+exposes `web_search` and `understand_image` to agents. **STT is not affected**
+— MiniMax does not document a transcription endpoint as of v0.19.x, so the mic
+keeps going through the OpenAI-compatible backend.
+
+### Decision flow per request
+
+```
+client POST /api/voice/tts { text }
+        │
+        ├─── x-voice-tts-minimax: 1? ── no ──▶ OpenAI-compatible backend
+        │
+        yes
+        │
+        ├─── minimaxService.getTtsConfig() returns null?
+        │       (tts.enabled=false OR apiKey missing)
+        │
+        │   yes ──▶ OpenAI-compatible backend (silent fallback, no 503)
+        │
+        ▼
+   minimaxService.synthesizeText({ text, voice? })
+        │
+        │   shells:  mmx speech synthesize --text <text> --voice <v>
+        │             --model <m> --format <f> --non-interactive
+        │
+        ├─── text.length > 10000  ──▶ 413 "10000 character limit"
+        ├─── mmx exits non-zero   ──▶ 502 "MiniMax TTS failed: …"
+        └─── success              ──▶ audio bytes
+                                   (Content-Type from contentTypeFor(format),
+                                    Cache-Control: no-store)
+```
+
+The opt-in header is set from `voiceConfig.ttsUseMinimax` (`src/hooks/useVoiceConfig.ts:36`).
+The voice override is `voiceConfig.ttsMinimaxVoice` and rides on `x-voice-tts-minimax-voice`.
+If the override is empty, the proxy uses whatever voice the user picked in
+Settings → MiniMax (carried inside `minimax_settings.tts.voice`).
+
+### Settings
+
+TTS lives in the same `app_config#minimax_settings` row as the rest of the
+feature. The `tts` sub-object defaults to:
+
+```json
+{ "tts": { "enabled": false, "model": "speech-2.8-turbo",
+           "voice": "English_expressive_narrator", "format": "mp3" } }
+```
+
+Activation requires three things to be true (all checked server-side in
+`getTtsConfig`):
+
+1. `minimax_settings.enabled === true` (the feature toggle in Settings → MiniMax).
+2. `minimax_settings.tts.enabled === true`.
+3. `minimax_settings.apiKey` is non-empty.
+
+The user toggles the feature in two places:
+
+- **Settings → MiniMax** turns on the whole managed MCP (which also gates
+  `web_search` + `understand_image` for agents) and stores the `apiKey`.
+- **Settings → Voice** has a separate **"MiniMax TTS"** section with a
+  `Use MiniMax for text-to-speech` toggle + an optional **Voice override**
+  text field. The model lives in the MiniMax tab — changing it there
+  immediately affects voice output (next request reads the cache miss).
+
+### Why `mmx speech synthesize` (synchronous) and not `t2a_async_v2` (long poll)
+
+The MiniMax public API documents both a synchronous HTTP endpoint
+(`speech-t2a-http`, up to 10k chars) and an async endpoint (`t2a_async_v2`,
+unlimited length, POST → poll → download). We use the synchronous CLI
+wrapper `mmx speech synthesize` rather than the long-poll HTTP path because:
+
+- The `mmx` CLI is already a dependency of the managed MCP package
+  (registered with `command: 'uvx', args: ['minimax-coding-plan-mcp', '-y']`
+  in `server/modules/minimax/minimax.service.ts:20-21`).
+- The CLI shells the synchronous HTTP endpoint internally, so the user
+  gets the same audio quality with one fewer moving part in the server.
+- The 10k char cap is a non-issue for chat-assistant read-aloud: assistant
+  messages are almost always < 4k chars in practice. A 413 surfaces cleanly
+  if a future user pastes a long message into TTS manually.
+- Same `__setUsageRunnerForTests` seam that already exists for
+  `mmx quota show` works for the synthesis path, so the test suite covers
+  the caller without monkey-patching `node:child_process`.
+
+If a future requirement needs > 10k char read-aloud, the change is local to
+`synthesizeText`: swap the synchronous `mmx` call for a
+`createJob → poll → downloadBytes` HTTP client, and the test seam swaps
+`__setUsageRunnerForTests` for a `__setTtsFetcherForTests` that returns
+canned `{ task_id, status, file_id, bytes }` stages. The proxy signature
+does not change.
+
+### Security
+
+- The MiniMax API key never leaves the server. The browser only sends
+  `x-voice-tts-minimax: 1` as an opt-in flag; `minimaxService` reads the
+  key from `app_config` per request.
+- The voice override (`x-voice-tts-minimax-voice`) is a string with no
+  injection surface — `mmx` is shelled via `spawnSync` with an args array,
+  not a shell string.
+- SSRF guard is not relevant for this path because the upstream is a fixed
+  constant (`apiHost` from `minimax_settings`), not user-controlled per
+  request. The existing `isAllowedBackendUrl` still gates the OpenAI
+  branch.
+
+### Test coverage
+
+`server/modules/minimax/tests/minimax.tts.test.ts` (10 tests, all green)
+covers:
+
+- `getTtsConfig` returns `null` when `tts.enabled` is false (even if the
+  feature is on).
+- `getTtsConfig` returns `null` when `apiKey` is missing.
+- `getTtsConfig` returns the full sub-config when both are set.
+- `synthesizeText` throws when TTS is disabled.
+- `synthesizeText` rejects empty/whitespace text.
+- `synthesizeText` rejects > 10k char text with the 413-friendly message.
+- `synthesizeText` shells `mmx` with the exact arg shape and returns the
+  stdout bytes.
+- `synthesizeText` accepts per-call voice/model/format overrides.
+- `synthesizeText` surfaces spawn ENOENT as a clear error.
+- `updateSettings` persists `tts` without disturbing the legacy `enabled`
+  flag.
+
+Run with:
+
+```bash
+cd server && PATH=/opt/node22/bin:$PATH npx tsx --test \
+  modules/minimax/tests/minimax.tts.test.ts
+```
+
 ## See also
 
 - [Provider overview](./providers/README.md) — the provider facet contract that

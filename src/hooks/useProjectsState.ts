@@ -445,72 +445,19 @@ export function useProjectsState({
   }, [fetchProjects]);
 
   const registerOptimisticSession = useCallback(({
-    sessionId: newSessionId,
-    provider,
-    project,
-    summary,
+    sessionId: _newSessionId,
+    provider: _provider,
+    project: _project,
+    summary: _summary,
   }: RegisterOptimisticSessionArgs) => {
-    if (!newSessionId || !project?.projectId) {
-      return;
-    }
-
-    const now = new Date().toISOString();
-    const optimisticSession: ProjectSession = {
-      id: newSessionId,
-      summary: summary ?? '',
-      messageCount: 0,
-      createdAt: now,
-      created_at: now,
-      updated_at: now,
-      lastActivity: now,
-      __provider: provider,
-      __projectId: project.projectId,
-    };
-    const upsert: SessionUpsertedEvent = {
-      kind: 'session_upserted',
-      sessionId: newSessionId,
-      provider,
-      session: optimisticSession,
-      project: {
-        projectId: project.projectId,
-        path: project.path || project.fullPath,
-        fullPath: project.fullPath || project.path || '',
-        displayName: project.displayName,
-        isStarred: Boolean(project.isStarred),
-      },
-      timestamp: now,
-    };
-
-    setProjects((previousProjects) => {
-      const existingProject = previousProjects.find((candidate) => candidate.projectId === project.projectId);
-      if (!existingProject) {
-        return [upsertSessionIntoProject(projectFromRegistration(project), upsert), ...previousProjects];
-      }
-
-      const updatedProject = upsertSessionIntoProject(existingProject, upsert);
-      if (updatedProject === existingProject) {
-        return previousProjects;
-      }
-
-      return previousProjects.map((candidate) =>
-        candidate.projectId === existingProject.projectId ? updatedProject : candidate,
-      );
-    });
-
-    setSelectedProject((previousProject) => {
-      if (!previousProject || previousProject.projectId !== project.projectId) {
-        return previousProject;
-      }
-
-      const updatedProject = upsertSessionIntoProject(previousProject, upsert);
-      return updatedProject === previousProject ? previousProject : updatedProject;
-    });
-
-    setSelectedSession((previousSession) => (
-      previousSession?.id === newSessionId
-        ? { ...previousSession, ...optimisticSession }
-        : optimisticSession
-    ));
+    // No-op: kept for backward compatibility with the public hook surface,
+    // but the optimistic prepend it used to perform is what caused the
+    // "two new chats on every send" bug. The chat-run registry now sends a
+    // canonical `session_upserted` carrying the app id (after the provider
+    // reveals its native id), so the sidebar fills in correctly without a
+    // racing optimistic insert. See `AppContent.tsx#onSessionEstablished`
+    // for the call site.
+    void _newSessionId; void _provider; void _project; void _summary;
   }, []);
 
   // Hydrates TaskMaster details for the given `projectId`. The project
@@ -635,6 +582,12 @@ export function useProjectsState({
         const existingProject = previousProjects.find((project) =>
           targetProjectId ? project.projectId === targetProjectId : getProjectSessions(project).some((session) => session.id === upsert.sessionId),
         );
+
+        // No more optimistic-merge path: the prepend was removed entirely
+        // (see `registerOptimisticSession` no-op), so any upsert we receive
+        // either matches an existing session by alias or belongs to a brand
+        // new project. We only need the canonical "new project / existing
+        // project" branches below.
 
         if (!existingProject) {
           // First session of a project this client has never seen: create the

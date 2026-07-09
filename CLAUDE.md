@@ -4,74 +4,127 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this project is
 
-CloudCLI (npm: `@cloudcli-ai/cloudcli`, formerly `claudecodeui`) is a web/desktop UI for Claude Code, Cursor CLI, Codex, Gemini CLI, OpenCode, and (planned) Qwen Code. It is a Vite + React frontend served by an Express backend, packaged as an Electron desktop app, and shipped as a single npm binary (`cloudcli`).
+CloudCLI (npm `@cloudcli-ai/cloudcli`, formerly `claudecodeui`) is a web/desktop UI for several AI coding CLIs — Claude Code, Cursor CLI, Codex, Gemini CLI, OpenCode, Qwen Code (and a `minimax` MCP module). It is a Vite + React frontend served by an Express backend, packaged as an Electron desktop app, and shipped as a single npm binary (`cloudcli`). Repo root: `/opt/cloud-cli2026`.
 
 ## Common commands
 
-Requires Node.js 22+ (`.nvmrc` pins `v22`). Use npm — `package.json` declares `"type": "module"` and lockfile is `package-lock.json`.
+Node.js 22 is pinned (`.nvmrc` → `22`, `.npmrc#engine-strict=true`, `package.json#engines.node = ">=22.0.0 <23.0.0"`). Use npm — `"type": "module"`, lockfile is `package-lock.json`. The host `/usr/bin/node` is Node 24, so `PATH=/opt/node22/bin:$PATH` is required for any manual install.
 
-- `npm run dev` — run server (`tsx`) + Vite client together (`concurrently --kill-others`).
+- `npm run dev` — server (`tsx watch`) + Vite client concurrently (`concurrently --kill-others`).
+- `npm run server:dev` / `server:dev-watch` — Express server only (auto-reload on watch).
 - `npm run client` — Vite dev server only (port `VITE_PORT`, default 5173).
-- `npm run server:dev` — Express server only via `tsx` (auto-reload on file change with `server:dev-watch`).
-- `npm run build` — production build of both frontend (`vite build` → `dist/`) and server (`tsc` + `tsc-alias` → `dist-server/`).
-- `npm run build:client` / `npm run build:server` — build each side independently. `build:server` deletes `dist-server` first.
-- `npm start` — `build` then run the compiled server (`node dist-server/server/index.js`). The `cloudcli` binary in `package.json#bin` resolves to `dist-server/server/cli.js`.
-- `npm run typecheck` — `tsc --noEmit` against both `tsconfig.json` (frontend) and `server/tsconfig.json` (backend). Always run before pushing.
-- `npm run lint` / `npm run lint:fix` — ESLint over `src/` and `server/` (two different configs in `eslint.config.js`).
-- `npm run desktop` / `npm run desktop:dev` — launch the Electron shell. `desktop:dev` points Electron at the Vite dev server (`ELECTRON_DEV_URL=http://127.0.0.1:5173`).
-- `npm run desktop:dist:mac` / `:win` — produce signed desktop installers via `electron-builder`. `npm run desktop:pack` produces an unpacked dir build.
-- `npm run server:bundle` — build + run `scripts/release/build-server-bundle.js` for the npm tarball.
-- `npm run release` — interactive release via `release-it` + `@release-it/conventional-changelog` (requires `GITHUB_TOKEN`).
-- `node scripts/fix-node-pty.js` — postinstall for the **server's own** `node-pty` (macOS spawn-helper perms). Runs automatically via `postinstall`.
-- `node scripts/fix-server-native-modules.js` — recompile the **server's own** native bindings (`better-sqlite3`, `node-pty`, `bcrypt`, `sharp`, …) against the Node ABI used by the runtime. The runtime Node is read from `NODE_BINARY` in `.env` (the same value `ecosystem.config.cjs` consumes for PM2), falling back to `process.execPath`. Runs automatically via `postinstall` and is also exposed as `npm run fix:native`. **Run this after changing `NODE_BINARY` or when the server crashes on startup with `ERR_DLOPEN_FAILED: ... better_sqlite3.node`.** Mirror of `fix-plugin-native-modules.js` for the server itself.
+- `npm run build` — full production build: frontend (`vite build` → `dist/`) + server (`tsc` + `tsc-alias` → `dist-server/`). `build:server` deletes `dist-server` first.
+- `npm start` — `build` then run `node dist-server/server/index.js`. The `cloudcli` binary in `package.json#bin` resolves to `dist-server/server/cli.js`.
+- `npm run typecheck` — `tsc --noEmit` against both `tsconfig.json` (frontend) and `server/tsconfig.json` (backend). **Run before pushing.**
+- `npm run lint` / `lint:fix` — ESLint over `src/` and `server/` (single `eslint.config.js` with two configs).
+- `npm run desktop` / `desktop:dev` — Electron shell; `desktop:dev` points at Vite (`ELECTRON_DEV_URL=http://127.0.0.1:5173`).
+- `npm run desktop:dist:mac` / `:win` — signed installers via `electron-builder`. `:pack` → dir build only.
+- `npm run release` — interactive release via `release-it` (`GITHUB_TOKEN` required).
+- `npm run fix:native` → `node scripts/fix-server-native-modules.js` — recompile server natives (`better-sqlite3`, `node-pty`, `bcrypt`, `sharp`) against the ABI of `.env#NODE_BINARY`. Runs automatically via `postinstall`.
+- `npm run fix:plugin-native` → `node scripts/fix-plugin-native-modules.js` — same for plugins under `~/.claude-code-ui/plugins/*`.
+- `./scripts/update.sh` — single-command deploy on the VPS (see "Build & Deploy" below).
 
-### Dev workflow on this project
+### Single-test loop
 
-The host system default is Node 24 (`/usr/bin/node`). This project pins Node 22 via `.env` (`NODE_BINARY=/opt/node22/bin/node`), `ecosystem.config.cjs#exec_interpreter`, and the `package.json#engines` field (with a `.nvmrc` set to `22`). Before running `npm install` from a shell that defaults to Node 24, either `nvm use`, prefix with `/opt/node22/bin/npm`, or rely on the postinstall (`scripts/fix-server-native-modules.js`) which rebuilds every native binding against `.env` `NODE_BINARY` regardless of which Node invoked npm.
-- `node scripts/fix-plugin-native-modules.js` — recompile native bindings (`node-pty`, `better-sqlite3`, etc.) for installed plugins under `~/.claude-code-ui/plugins/*`. Run after a Node upgrade or when a plugin crashes with "Cannot find module 'node-pty'". Accepts an optional plugin dir name (`… web-terminal`) and `--dry-run`. The install/update flows in `server/utils/plugin-loader.js` already call `npm rebuild` automatically — this script is the manual escape hatch for plugins installed before that fix. Also exposed as `npm run fix:plugin-native`.
+There is no `npm test`. Tests live next to the module under test (`*.test.ts`) and are run directly:
+
+```bash
+npx tsx server/modules/providers/tests/skill-state.test.ts
+npx tsx server/opencode-cli.test.js
+```
+
+Use `npx playwright …` for anything under `tests/e2e/` (devDep).
+
+## Architecture
+
+### Frontend — `src/`
+
+React 18 + Vite + Tailwind + CodeMirror 6 (`@uiw/react-codemirror`) + xterm.js for the integrated shell + `@xterm/...-webgl` for terminal rendering. i18n via `i18next` + `react-i18next` (locales under `src/i18n/locales/<lang>/`; default is `es`). Routing via `react-router-dom`. UI state lives in `src/stores/` (Zustand) and per-feature hooks under `src/components/<feature>/hooks/`.
+
+Key feature areas:
+
+- `src/components/chat/` — composer, messages pane, tool rendering. `chat/tools/configs/toolConfigs.ts` is the **single source of truth** for `toolName → React renderer`; `kind: 'tool_use'` events from every provider route through it, so the rendering is provider-agnostic.
+- `src/components/settings/` — provider-level and global settings, organised by tab (`settings/view/tabs/<feature>-settings/`).
+- `src/components/skills/`, `mcp/`, `git-panel/`, `file-tree/`, `code-editor/`, `prd-editor/`, `task-master/`, `plugins/`, `provider-auth/`, `voice/`, `browser-use/`, `onboarding/`, `quick-settings-panel/`.
+- `src/i18n/locales/{de,en,es,fr,it,ja,ko,ru,tr,zh-CN,zh-TW}/` — translation bundles keyed by feature area.
+
+The frontend `@/*` alias points to `src/` (configured in `vite.config.js` and root `tsconfig.json`).
+
+### Backend — `server/`
+
+Express + native WS (`ws`). Two layers:
+
+1. **Top-level shims** in `server/` (`claude-sdk.js`, `openai-codex.js`, `gemini-cli.js`, `opencode-cli.js`, `cursor-cli.js`, `qwen-cli.js`, `browser-use-mcp.ts`, `voice-proxy.js`, `sessionManager.js`, `index.js`). These are the spawn/process-management entry points; `index.js` wires them all into the Express + WebSocket server. The shebang of `index.js` is `#!/usr/bin/env node`, but PM2 does not care — it uses `ecosystem.config.cjs#exec_interpreter`.
+2. **Modules** under `server/modules/`:
+   - `providers/` — **provider registry** (see below). Each provider lives under `list/<id>/` with five facets.
+   - `minimax/` — a vertical MCP module (routes + service + tests) for the `MiniMax-M3` proxy on `https://api.minimax.io/v1`. Docs at `docs/mcp/minimax.md`.
+   - `database/`, `sqlite/`, `files/` (incl. `tree-cache.js`), `projects/`, `notifications/`, `websocket/`, `browser-use/`.
+3. **`server/shared/`** and top-level **`shared/`** — types and provider interfaces shared with the frontend (`server/shared/interfaces.ts` defines `IProviderAuth`, `IProviderMcp`, `IProviderSkills`, `IProviderSessions`, `IProviderSessionSynchronizer`).
+4. **`server/modules/providers/README.md`** is the canonical guide for the provider contract — **read it before adding a new provider**.
+
+### Provider facet model
+
+Every provider is a thin wrapper exposing five readonly facets: `auth`, `mcp`, `skills`, `sessions`, `sessionSynchronizer`. Provider ids currently shipped: `claude`, `codex`, `cursor`, `gemini`, `opencode`, `qwen`. MiniMax is a configuration layer rather than a provider.
+
+Consuming services (`providerAuthService`, `providerMcpService`, `providerSkillsService`, `sessionsService`, `sessionSynchronizerService`) live next to the registry and don't import concrete provider classes. New providers must:
+
+- update the union in `server/shared/types.ts#LLMProvider` and `src/types/app.ts#LLMProvider`,
+- appear in `provider.routes.ts` and `provider.registry.ts`,
+- be wired in `server/routes/agent.js` if launchable from the chat composer,
+- be added to `PROVIDER_ORDER` in `public/api-docs.html` and the UI lists (`useChatProviderState.ts`, `ProviderSelectionEmptyState.tsx`, `ProviderLoginModal.tsx`).
+
+Capabilities & permission modes per provider (UI matrix) live in `docs/providers/agente.md`. Per-provider docs: `claude.md`, `codex.md`, `cursor.md`, `gemini.md`, `opencode.md`, `qwen.md`.
+
+### WebSocket topology
+
+The server mounts several WS endpoints — all proxied by Vite in dev (`/ws`, `/shell`, `/plugin-ws`) and served from the Express port in prod:
+
+- `/ws` — chat streaming (per-session).
+- `/shell` — PTY shells (Node `ws` + `node-pty`).
+- `/plugin-ws` — internal plugin IPC.
+
+### Voice
+
+Voice (push-to-talk, read-aloud) is a thin HTTP proxy, not a provider. STT/TTS point at any OpenAI-compatible backend (OpenAI, Groq, LocalAI, Speaches, Kokoro-FastAPI, etc.). Architecture and the two modes (direct vs. `/api/voice/*` proxy) are documented in `docs/voice.md`.
+
+### Desktop & binary
+
+Electron shell at `electron/`. Packaging via `electron-builder` (config inline in `package.json#build`). The release tarball contains `electron/`, `server/`, `shared/`, `dist/`, `dist-server/`, `scripts/`. The CLI entrypoint is `server/cli.js`.
+
+## Configuration & data locations
+
+The single source of truth for env vars is `.env.example` (copy → `.env`). Important knobs:
+
+- `NODE_BINARY=/opt/node22/bin/node` — pinned Node interpreter; **must stay in sync** with `ecosystem.config.cjs#exec_interpreter`, `package.json#engines.node`, `.nvmrc`, and the shebang of `scripts/fix-*.js` (`#!/opt/node22/bin/node`).
+- `WORKSPACES_ROOT=/` — root used by `/api/browse-filesystem`. Defaults to `os.homedir()` (which collides with `FORBIDDEN_WORKSPACE_PATHS` when running as root); pin this to a non-system path.
+- `SERVER_PORT`, `VITE_PORT`, `HOST` — server / Vite ports and bind address.
+- `CONTEXT_WINDOW=1000000` / `VITE_CONTEXT_WINDOW=1000000` — Claude Code context window cap.
+- `DATABASE_PATH` — auth SQLite (`better-sqlite3`).
+- `FORBIDDEN_WORKSPACE_PATHS`, `PROVIDER_ORDER` are wired in `server/constants/`.
+
+CLI introspection: `cloudcli status` shows where `.env` should live and the active data locations.
 
 ## Build & Deploy en el VPS — cómo compilar y actualizar (NUNCA rompas esto)
 
 > **Regla de oro:** este proyecto SIEMPRE corre en **Node 22**, sin importar qué versión de Node tenga el host. PM2, los binarios nativos (`better-sqlite3`, `node-pty`, `bcrypt`, `sharp`) y los scripts de fix deben estar alineados a Node 22. Si se desalinean, el servidor crashea con `ERR_DLOPEN_FAILED: Module did not self-register: '.../better_sqlite3.node'` y entra en bucle de reinicios.
 
-### El problema (por qué pasa cada vez que se actualiza)
-
-1. El VPS trae Node 24 en `/usr/bin/node`, que es el primer `node` en `PATH`.
-2. PM2 sí está bien configurado (`ecosystem.config.cjs` usa `exec_interpreter: process.env.NODE_BINARY` → `/opt/node22/bin/node`), así que el **server corre en Node 22**.
-3. Pero cuando alguien hace `git pull` + `npm install` desde un shell normal, ese `npm` es el de Node 24, y los módulos nativos (`better-sqlite3`, `node-pty`, `bcrypt`, `sharp`) se compilan contra el **ABI de Node 24** (modules version 137).
-4. Al reiniciar, PM2 intenta cargarlos con Node 22 (ABI 127) → **`ERR_DLOPEN_FAILED`** → bucle de crash.
-
-La pieza de defensa está en tres archivos que **deben estar en sync siempre**:
-- `.env#NODE_BINARY=/opt/node22/bin/node`
-- `ecosystem.config.cjs#exec_interpreter` (lee `process.env.NODE_BINARY`)
-- `package.json#engines.node = ">=22.0.0 <23.0.0"` (reforzado por `.npmrc#engine-strict=true`)
-- Shebang de los scripts de fix: `#!/opt/node22/bin/node` (no `#!/usr/bin/env node`)
-
-### El camino correcto — UN solo comando
+**El camino correcto — un solo comando:**
 
 ```bash
 cd /opt/cloud-cli2026
 ./scripts/update.sh
 ```
 
-Eso es todo. `scripts/update.sh` encapsula los seis pasos críticos en orden:
+`scripts/update.sh` resuelve `NODE_BINARY` (env var, luego `.env`, luego `/opt/node22/bin/node`), antepone `/opt/node22/bin` al `PATH`, ejecuta `git pull --rebase --autostash`, `npm ci` (`engine-strict=true` aborta si Node no es 22), `npm run fix:native` (belt-and-suspenders), `npm run build`, `pm2 restart cloud-cli2026`, y hace health-check en `http://127.0.0.1:${SERVER_PORT}/health`. Sale con código 1 si el HTTP no es 200, imprimiendo los últimos logs de error de PM2.
 
-1. Resuelve `NODE_BINARY` (de la variable de entorno, o de `.env`, o fallback `/opt/node22/bin/node`).
-2. **Antepone `/opt/node22/bin` al `PATH`** para que `npm`, `node-gyp` y cualquier subproceso usen Node 22.
-3. `git pull --rebase --autostash` (skipable con `--no-pull`).
-4. `npm ci` (lockfile-driven, no toca `package.json`; `engine-strict=true` aborta si el Node no es 22).
-5. `npm run fix:native` (recompila nativos explícitamente, por si `postinstall` fue skipeado por `NPM_CONFIG_IGNORE_SCRIPTS`).
-6. `npm run build` → `pm2 restart cloud-cli2026` → health check en `http://127.0.0.1:${SERVER_PORT}/health`. Si el HTTP no es 200, el script imprime el último log de error de PM2 y sale con código 1.
+Flags:
 
-Flags útiles:
-- `./scripts/update.sh --no-pull` — si ya hiciste `git pull` a mano.
-- `./scripts/update.sh --no-build` — si solo cambiaste dependencias/JS sin tocar nada que requiera `dist-server/`.
-- `./scripts/update.sh --no-restart` — para validar la build sin reiniciar PM2.
-- `./scripts/update.sh --hard` — borra `node_modules/` antes de `npm ci` (resuelve dependencias zombi o ABI corrupto persistente).
+- `--no-pull` — ya hiciste `git pull` a mano.
+- `--no-build` — solo cambiaste deps / JS sin tocar nada que requiera `dist-server/`.
+- `--no-restart` — valida la build sin tocar PM2.
+- `--hard` — borra `node_modules/` antes de `npm ci` (resuelve dependencias zombi o ABI corrupto persistente).
 
-### El camino manual (qué hace el script por dentro, para aprender)
-
-Si por alguna razón `update.sh` no está disponible, **todos** estos pasos deben ejecutarse con Node 22 en `PATH`. El orden importa:
+**El camino manual** (qué hace el script por dentro) **debe** ejecutarse con Node 22 en `PATH` y en este orden:
 
 ```bash
 export PATH=/opt/node22/bin:$PATH      # 1. forzar Node 22
@@ -83,390 +136,41 @@ npm ci --no-audit --no-fund            # 3. instalar deps con el lockfile
 npm run fix:native                     # 4. belt-and-suspenders
 npm run build                          # 5. tsc + vite → dist/, dist-server/
 pm2 restart cloud-cli2026              # 6. aplicar
-sleep 2 && curl http://127.0.0.1:3030/health   # 7. verificar
+sleep 2 && curl http://127.0.0.1:${SERVER_PORT}/health   # 7. verificar
 ```
 
-### Lo que NUNCA hay que hacer
+**Anti-patrones que rompen el deploy:**
 
 | ❌ Anti-patrón | Por qué rompe | ✅ Correcto |
 |---|---|---|
-| `npm install` desde shell con `PATH` por defecto | `npm` será Node 24 → nativos contra ABI 137 | `PATH=/opt/node22/bin:$PATH npm ci` o `./scripts/update.sh` |
+| `npm install` con `PATH` por defecto | `npm` será Node 24 → nativos contra ABI 137 | `PATH=/opt/node22/bin:$PATH npm ci` o `./scripts/update.sh` |
 | `pm2 restart` sin `npm ci` previo | Si los nativos están desalineados, PM2 no los puede cargar | Siempre `npm ci` antes de reiniciar si cambió `package.json` o `package-lock.json` |
-| Cambiar `.env#NODE_BINARY` sin recompilar nativos | Los `.node` quedan compilados para el Node anterior | Después de tocar `NODE_BINARY`: `npm run fix:native` + `pm2 restart` |
-| Cambiar el shebang de los scripts a `#!/usr/bin/env node` | Coge el `node` de PATH (Node 24) en invocaciones directas | Mantener `#!/opt/node22/bin/node` en `scripts/fix-*.js` |
+| Cambiar `.env#NODE_BINARY` sin recompilar nativos | Los `.node` quedan compilados para el Node anterior | Tras tocar `NODE_BINARY`: `npm run fix:native` + `pm2 restart` |
+| Cambiar el shebang de los scripts a `#!/usr/bin/env node` | Coge el `node` de PATH (Node 24) | Mantener `#!/opt/node22/bin/node` en `scripts/fix-*.js` |
 | Borrar `.npmrc` o setear `engine-strict=false` | `npm install` con Node 24 ya no aborta, compila en silencio | `.npmrc` debe tener `engine-strict=true` |
 
-### Diagnóstico rápido (cuando algo falla)
+**Diagnóstico rápido:**
 
 ```bash
-# 1. ¿Qué Node corrió el último npm?
-head -3 /opt/cloud-cli2026/node_modules/better-sqlite3/build/Release/better_sqlite3.node \
-  | xxd | head -1   # ELF header — útil para confirmar que existe
-
-# 2. ¿El binario carga con Node 22?
 /opt/node22/bin/node -e "require('better-sqlite3')(':memory:')" && echo OK
-
-# 3. ¿Qué Node está en PATH?
-which node && node -v
-# Si dice v24.x.x → estás en el shell equivocado. Usa ./scripts/update.sh
-
-# 4. ¿Qué exec_interpreter tiene PM2?
-pm2 jlist | grep -oE '"exec_interpreter":"[^"]+"' | head -1
-# Debe ser /opt/node22/bin/node
-
-# 5. ¿Qué está roto en el server?
+which node && node -v                           # si dice v24 → shell equivocado, usa ./scripts/update.sh
+pm2 jlist | grep -oE '"exec_interpreter":"[^"]+"' | head -1   # debe ser /opt/node22/bin/node
 pm2 logs cloud-cli2026 --lines 50 --nostream --err
 ```
 
-Si `require('better-sqlite3')` falla con `ERR_DLOPEN_FAILED`, la solución inmediata es:
+## Project notes / pinned feedback (from memory)
 
-```bash
-PATH=/opt/node22/bin:$PATH npm run fix:native
-pm2 restart cloud-cli2026
-```
+These are confirmed user/project rules that previously recurred; honour them whenever they apply:
 
-### Recuperación de emergencia (módulos nativos destruidos)
+- **Node 22 ABI alignment.** `.env#NODE_BINARY`, `ecosystem.config.cjs#exec_interpreter`, the shebang of `scripts/fix-*.js`, and `.nvmrc`/`package.json#engines.node` must all stay in sync. The `postinstall` (`scripts/fix-server-native-modules.js`) rebuilds natives against `.env#NODE_BINARY` regardless of which Node invoked npm, but the shebang pin prevents direct-script invocations from picking up Node 24.
+- **Native-module fix script.** `node scripts/fix-server-native-modules.js` is idempotent: when the binding already matches the target ABI it exits quickly. Use `--dry-run` to preview, `--target /path/to/node` to override auto-detection.
+- **Git panel UX** (`src/components/git-panel/`). Stabilise the panel with `useMemo` so it does not refetch on every `session_upserted`. Auto-prefix commit messages (don't make the user type a Conventional Commits scope). **Never silent-fail on commit error** — surface the failure (toast / inline error) and keep the editor's text intact so the user can retry.
 
-Si `npm run fix:native` (o cualquier `npm rebuild`) se aborta a mitad de camino — por ejemplo, porque `sharp` falló al compilar (requiere `libvips-dev` que no está instalado) — puede dejar un paquete como `better-sqlite3` con el directorio parcialmente poblado: solo `LICENSE` y `deps/`, sin `package.json` ni `lib/` ni `build/Release/*.node`. Síntomas en logs:
+## Where to read more
 
-```
-Error: Cannot find package '/opt/cloud-cli2026/node_modules/better-sqlite3/index.js'
-  code: 'ERR_MODULE_NOT_FOUND'
-```
-
-O, si el binario quedó pero compilado para el ABI equivocado:
-
-```
-Error: Module did not self-register: '.../better_sqlite3.node'
-  code: 'ERR_DLOPEN_FAILED'
-```
-
-Receta de recuperación (ojo: parar PM2 primero para que no entre en bucle de crash y nos impida operar):
-
-```bash
-# 1. Parar el bucle de reinicios
-pm2 stop cloud-cli2026 && pm2 delete cloud-cli2026
-
-# 2. Reconstruir TODO node_modules desde el lockfile, SIN postinstall
-#    (con --ignore-scripts evitamos que se dispare el rebuild de sharp)
-export PATH=/opt/node22/bin:$PATH
-npm ci --no-audit --no-fund --ignore-scripts
-
-# 3. Recompilar SOLO los 3 nativos de producción (sharp es devDependency,
-#    no se usa en runtime, y rompe sin libvips-dev)
-npm rebuild --build-from-source bcrypt better-sqlite3 node-pty
-
-# 4. Validar antes de levantar el server
-node -e "require('better-sqlite3')(':memory:'); console.log('OK')"
-node -e "require('bcrypt'); console.log('OK')"
-node -e "require('node-pty'); console.log('OK')"
-
-# 5. Levantar PM2
-pm2 start ecosystem.config.cjs
-sleep 3 && curl http://127.0.0.1:3030/health
-```
-
-**Reglas duras para que el rebuild nunca destruya nada:**
-
-1. **`sharp` nunca se compila desde fuente en este VPS** — no está en el runtime (es devDependency de Vite/image-processing), y requiere `libvips-dev` instalado vía apt. El binario precompilado de npm tampoco funciona en este host (arquitectura), así que la política es: **si el `node_modules/sharp` se rompió, simplemente se borra** con `rm -rf node_modules/sharp` y se deja que Vite lo baje cuando lo necesite (es dev-time).
-2. **`npm ci --ignore-scripts` antes de cualquier `npm rebuild`** — así no se dispara el ciclo destructivo de sharp.
-3. **Si una compilación nativa falla, abortar TODO** — nunca seguir con el siguiente paquete (un rebuild a medias deja el módulo sin `package.json`).
-4. **Validar `require()` después de cada rebuild** — si falla, NO seguir.
-
-El script `scripts/fix-server-native-modules.js` está siendo refactorizado para aplicar estas reglas (ver tarea #7 en el changelog).
-
-### Resumen de una línea
-
-> Cualquier cambio que toque código, dependencias o Node → **`./scripts/update.sh`**. Si necesitas `npm` directo, **`PATH=/opt/node22/bin:$PATH npm ...`**. Nunca `npm install` con el `PATH` por defecto del host.
-
-### Quién compila y reinicia PM2 — el usuario, no Claude
-
-Por convención de este proyecto, **Claude nunca corre `pm2 restart`, `npm install`, `npm run build`, ni `./scripts/update.sh` por su cuenta**. Después de cada cambio de código, dependency bump, o movimiento de Node, terminamos la respuesta diciéndole al usuario qué comando correr (`./scripts/update.sh` o equivalente con `PATH=/opt/node22/bin:$PATH`), y él se encarga de aplicarlo y verificar el health check. Esto evita:
-
-- Romper una sesión de PM2 en medio de una sesión larga sin manera fácil de recuperarla.
-- Doble restart (Claude hace uno, el usuario hace otro) que oculta si el fix realmente funcionó.
-- Mezclar el postinstall nativo con el restart (orden importa: `npm ci` → `fix:native` → `build` → `pm2 restart`).
-
-Si el usuario explícitamente te autoriza ("dale, reiniciá PM2", "compilá"), entonces procedés. Si no, terminá con: *"Cuando corras `./scripts/update.sh`, vas a ver… (lo que esperás ver)"*.
-
-### Tests
-
-There is **no top-level `npm test`**. Tests are colocated `*.test.ts` / `*.test.js` next to the files they cover and are run with `tsx` or `node --test` (no test framework is configured in `package.json`). Run them directly, e.g.:
-
-```bash
-npx tsx --test server/modules/database/tests/projects.db.integration.test.ts
-npx tsx --test server/modules/providers/tests/skills.test.ts
-npx tsx --test server/modules/websocket/tests/chat-run-registry.test.ts
-node --test server/services/tests/notification-orchestrator.test.js
-```
-
-Backend tests live under `server/**/tests/**`. Frontend tests are rare; one Vitest-style example is `src/components/chat/tools/components/ContentRenderers/QuestionAnswerContent.test.tsx`.
-
-> **Path trick**: the backend `@/*` alias only resolves from inside `server/`. Tests that import `@/modules/...` MUST be run from `cd server` (or with the test runner rooted there), e.g. `cd /opt/cloud-cli2026/server && npx tsx --test modules/minimax/tests/minimax.service.test.ts`. Running from the repo root produces `ERR_MODULE_NOT_FOUND: Cannot find package '@/modules'`.
-
-## Architecture
-
-Two compile targets share one repo:
-
-- **Frontend** (`src/`, Vite, TypeScript+JSX, Tailwind, React 18) — built into `dist/` and served as static files by Express.
-- **Backend** (`server/`, Express, better-sqlite3, mixed JS+TS) — built by `tsc` (with `tsc-alias`) into `dist-server/`. The backend is still mostly JS — `server/tsconfig.json` enables `allowJs` with `checkJs: false` to allow incremental TS adoption.
-- **`shared/`** — code used by both sides (e.g. `shared/networkHosts.js` for `getConnectableHost` / `normalizeLoopbackHost`). Imported by both `vite.config.js` and `server/index.js`.
-
-### Path aliases
-
-Both sides use `@/*` but resolve differently:
-
-- Frontend (`tsconfig.json`): `@/*` → `src/*`. Vite alias matches.
-- Backend (`server/tsconfig.json`): `@/*` → `server/*` (rootDir is one level up so compiled output lands under `dist-server/server/`). `tsc-alias` rewrites the imports post-build.
-
-When writing a backend file, prefer `@/shared/...`, `@/modules/...`, `@/utils/...`. When writing a frontend file, prefer `@/components/...`, `@/contexts/...`, etc.
-
-### Runtime wiring (`server/index.js`)
-
-`server/index.js` is the composition root. It:
-
-1. Reads `.env` via `./load-env.js` before importing anything else.
-2. Resolves the app root with `utils/runtime-paths.js` (works for both source layout and `dist-server/` layout, and for `git` vs `npm` installs).
-3. Creates one Express app + http server, then attaches **one WebSocket server** built by `modules/websocket/index.ts#createWebSocketServer`. The single `ws` server is reused for `/ws` (chat), `/shell` (PTY), and `/plugin-ws/:name` (plugin proxy). Provider spawn/abort callbacks are dependency-injected into the WebSocket module from `index.js` — the websocket module itself does not import any provider runtime.
-4. Mounts REST routes. Most are protected by `middleware/auth.js#authenticateToken`; `/api/auth`, `/health`, and static files are public. The agent route uses API-key auth.
-5. Initializes the SQLite database (`modules/database/index.ts`), starts `initializeSessionsWatcher()` (the provider session synchronizer watcher) and `startEnabledPluginServers()`.
-6. Serves the SPA: `dist/` static files, then `app.get('*')` falls back to `dist/index.html`. Cache-Control is `no-cache` for HTML and `immutable, max-age=31536000` for hashed assets.
-
-Vite dev server proxies `/api`, `/ws`, `/shell`, `/plugin-ws` to the backend on `SERVER_PORT` (default `3001`), so the frontend can use relative URLs.
-
-### Backend module layout (`server/modules/`)
-
-Modules are the unit of architecture. ESLint enforces this via `eslint-plugin-boundaries` (`eslint.config.js#boundaries/elements`):
-
-- Each folder under `server/modules/` is one `backend-module`. Cross-module imports must go through the folder's `index.ts` / `index.js` barrel — internal files are forbidden.
-- Shared contract files (`server/shared/types.ts`, `server/shared/interfaces.ts`) are value-imported only via `import type` from modules.
-- Legacy files (`server/projects.js`, `server/sessionManager.js`, `server/utils/runtime-paths.js`) are explicitly classified as `backend-legacy-runtime` for the provider migration.
-
-Current modules:
-
-- `modules/database/` — SQLite (`better-sqlite3`). Repositories live in `repositories/` (`projects.db.ts`, `sessions.db.ts`, `users.ts`, `credentials.ts`, `api-keys.ts`, etc.). Schema in `schema.ts`, migrations in `migrations.ts`. The `db` import re-exported from `index.ts` is the canonical entry point.
-- `modules/projects/` — project CRUD, clone, star, TaskMaster detection, plus the `projects-with-sessions-fetch.service.ts` that broadcasts `loading_progress` over `/ws`.
-- `modules/providers/` — the **provider registry**. The full guide for adding a provider lives in `server/modules/providers/README.md`; the short version: each provider exposes `auth`, `models`, `mcp`, `skills`, `sessions`, `sessionSynchronizer` facets and lives under `list/<provider>/<provider>.*.provider.ts`. Register new providers in `provider.registry.ts` and update the type unions in both `server/shared/types.ts` and `src/types/app.ts`. Current providers: `claude`, `codex`, `cursor`, `gemini`, `opencode`, `qwen` (Qwen integration is staged via tasks #87-#96 — Phase 0 doc complete, code phases pending).
-- `modules/websocket/` — owns the single `ws` server. The README in that folder documents the message envelope, the per-run `seq` event log, the PTY lifecycle for `/shell`, and the plugin WebSocket proxy.
-- `modules/notifications/` — web-push + notification preferences + notification orchestration.
-- `modules/browser-use/` — Browser-Use MCP integration; owns its own routes (`browser-use.routes.ts`, `browser-use-mcp.routes.ts`) and service. **Per-chat-run session lifecycle:** each chat run gets its own auto-created `BrowserUseSession` (one per run, reused across tool calls, closed when the run completes) correlated via a sidecar file at `~/.cloudcli/browser-use/current-chat-run.json` written by `modules/websocket/services/chat-run-registry.service.ts` on `startRun` and cleared on `completeRun`. The MCP stdio server at `server/browser-use-mcp.ts` reads the sidecar with a 1s TTL cache and injects `chatRunId` into every tool call so the HTTP bridge in `browser-use-mcp.routes.ts` can resolve or auto-create the right session. **Live WebSocket broadcast:** every session mutation is pushed to the UI via three extra `GatewayEventKind` values — `browser_use_session_created`, `browser_use_session_updated`, `browser_use_session_closed` (declared in `server/shared/types.ts`, consumed by `src/components/browser-use/view/BrowserUsePanel.tsx` via `useWebSocket().subscribe`). Backward-compatible: existing MCP tools that pass `sessionId` directly keep working; the auto-management is additive.
-- `modules/minimax/` — **MiniMax Token Plan MCP** (`web_search` + `understand_image` via the upstream `minimax-coding-plan-mcp` PyPI package). Unlike `browser-use`, MiniMax talks to its own public API directly — there is no HTTP bridge, only a REST surface. **Endpoints**: `GET /api/minimax/status`, `GET/PUT /api/minimax/settings`, `GET /api/minimax/usage?force=1`. The user registers the `MINIMAX_API_KEY` (plaintext, same trust level as `browser_use_mcp_token`) in `app_config` row `minimax_settings`; on toggle-on the service writes `cloudcli-minimax` to every provider's MCP config via `providerMcpService.addMcpServerToAllProviders`. Credentials UI lives in **Settings → API & tokens** (`MiniMaxCredentialsSection`) — the toggle + status pills + **Suscripción y uso** quota card live in **Settings → MiniMax** (`MiniMaxSettingsTab`), which links back to the credentials tab when the key is missing. The usage card shells `mmx quota show --output json --non-interactive` via an injectable runner seam (60s in-process cache, `?force=1` bypasses for the manual Refresh button). Full architecture diagram in `docs/mcp/minimax.md`.
-
-### Per-skill enable/disable ("soft toggle")
-
-`server/modules/providers/services/skill-state.service.ts` adds a per-provider soft-disable layer on top of the existing `SkillsProvider` facet:
-
-- **Storage**: `app_config` row `disabled_skills` = JSON `{ [provider]: { [sourcePath]: true } }`. Zero migration — apps with no row get `{}`.
-- **Stamping**: `SkillsProvider.stampDisabledState(skills)` reads the disabled set and stamps each `ProviderSkill` with `enabled: true | false` (the field is optional in `ProviderSkill`; missing = enabled).
-- **Provider overrides** that merge additional skills (Claude's plugin skills) should call `stampDisabledState` on the merged result — see `claude-skills.provider.ts` for the pattern.
-- **REST endpoints** under `/api/providers/:provider/skills/...`: `GET /disabled`, `PUT /state` (bulk), `PUT /:skillKey/state` (per-skill). All key by `sourcePath` (the absolute path on disk), not by `name` (which can collide across folders).
-- **Tests** at `server/modules/providers/tests/skill-state.test.ts` (6 tests, all pass) cover: read on empty, idempotent toggling, cross-provider isolation, stamp + filter, persistence across instances, and bulk disable/re-enable.
-
-**OpenCode is special**: `OpenCodeSkillsProvider` scans `~/.config/opencode/skills/`, `~/.claude/skills/`, and `~/.agents/skills/` — i.e. OpenCode reuses Claude's skill catalog at the filesystem level. So uploading a skill for Claude makes it appear in the OpenCode tab too (with a "Shared with Claude" label in the install path UI). Conversely, **skills installed directly for OpenCode need at least one of those dirs to exist** — if they're all empty/missing, the Skills tab shows the "No skills discovered yet" empty state instead of being broken. See `docs/providers/opencode.md` for the full file inventory and `docs/providers/agente.md` for the per-provider capability matrix.
-
-### OpenCode permission model — agent + flag, not permissionMode
-
-OpenCode's permission system is **structurally different** from Claude/Codex/Cursor/Gemini. It does **not** consume a `permissionMode` string at spawn — instead the user picks a primary agent (`build` / `plan`) and toggles the `--auto` flag. The granular per-tool rules live in `~/.config/opencode/agent/<name>.md`. The CloudCLI side models this as `OpencodePermissionsState = { agent: 'build' | 'plan', autoApprove: boolean }` (persisted in `localStorage['opencode-settings']`) and exposes it via a dedicated `OpencodePermissions` component (`src/components/settings/view/tabs/agents-settings/sections/content/PermissionsContent.tsx`). The wiring is in `AgentCategoryContentSection.tsx` (add the opencode branch under `selectedCategory === 'permissions'`) and `useSettingsController.ts` (state + localStorage round-trip). **Not yet wired to the spawn** — today the values are persisted and shown in the UI but the gateway still passes `permissionMode: 'default'` regardless. Closing that loop requires changes in `server/modules/websocket/services/chat-websocket.service.ts` and `provider-capabilities.service.ts`.
-
-### Frontend layout (`src/`)
-
-Most feature folders follow the same `view / hooks / utils / types / constants` split. Top-level structure:
-
-- `App.tsx` wires the provider tree (`Theme → Auth → WebSocket → Plugins → TasksSettings → TaskMaster → ProtectedRoute → Router`). Router basename auto-detects reverse-proxy prefixes by inspecting `manifest.json`, the module script URL, and icon links — see `DEPLOYMENT_ASSET_DIRECTORIES` at the top of `App.tsx`.
-- `components/app/AppContent.tsx` is the main shell — composes Sidebar + MainContent + CommandPalette and consumes the `useProjectsState` hook for the canonical "selected project / selected session / active tab" state.
-- `contexts/` — `WebSocketContext.tsx` (chat + shell socket with subscribe/send), `AuthContext.jsx`, `ThemeContext.jsx`, `PluginsContext.tsx`, `TaskMasterContext.ts`, `PermissionContext.tsx`, `PaletteOpsContext.tsx`, `TasksSettingsContext.jsx`.
-- `stores/useSessionStore.ts` — zustand-style session store (the only Zustand usage; the rest of state lives in context+hooks).
-- `hooks/` — reusable hooks (`useDeviceSettings`, `useFileOpenResolver`, `useLocalStorage`, `useProjectsState`, `useSessionProtection`, `useUiPreferences`, `useVersionCheck`, `useVoiceConfig`, `useWebPush`).
-- `i18n/` — `i18next` setup; locale JSONs under `i18n/locales/`. Always run new user-facing strings through `t(...)`.
-- `lib/` — `voiceApi.ts`, `voicePlayer.ts`, `utils.js` (cn helper etc.).
-- `utils/api.js` — the shared API client (use `api.xxx(...)` from components instead of hand-rolling `fetch`).
-- `types/app.ts` — shared types including the `LLMProvider` union; must stay in sync with `server/shared/types.ts`.
-
-## Conventions
-
-### Conventional Commits required
-
-`commitlint.config.js` enforces `@commitlint/config-conventional`. Husky runs `commit-msg` (commitlint) and `pre-commit` (lint-staged: `eslint` over staged `src/**` and `server/**`). Use types from CONTRIBUTING.md (`feat`, `fix`, `perf`, `refactor`, `docs`, `style`, `chore`, `ci`, `test`, `build`). `feat` → minor bump, `fix` → patch; release-it reads commits to generate the changelog.
-
-### Provider messages normalize to one envelope
-
-All `/ws` server→client chat frames carry a `kind` field (either a `NormalizedMessage` kind or a gateway kind like `chat_subscribed`, `session_upserted`, `loading_progress`, `protocol_error`). Every provider run ends with exactly one `complete` message built by `createCompleteMessage()` in `server/shared/utils.ts`. The frontend should never see provider-specific event shapes.
-
-### Sandbox boundary
-
-Docker sandbox is an opt-in CLI command (`cloudcli sandbox ...`); it is not part of the server runtime. Templates live in `server/cli.js#SANDBOX_TEMPLATES`.
-
-### Plugins are external processes
-
-Plugins install via Settings → Plugins and are launched as separate Node processes; the backend reaches them via `utils/plugin-process-manager.js#getPluginPort` and the `/plugin-ws/:pluginName` proxy. The reference starter plugin lives at `plugins/starter/`.
-
-**Native bindings.** Plugin installs use `npm install --ignore-scripts` for safety, which skips `node-gyp` for native deps like `node-pty`. `server/utils/plugin-loader.js#runNpmRebuild` runs `npm rebuild` right after install/update so those bindings exist by the time the plugin subprocess boots. If you see `Cannot find module 'node-pty'` (or similar) in `cloud-cli2026-error-*.log`, the binary is missing for the current Node ABI — fix it with `node scripts/fix-plugin-native-modules.js` (or pass the plugin dir name to scope it).
-
-### i18n: Spanish is the default; no hardcoded English UI
-
-The default UI language is **Spanish (`'es'`)** — set in `src/i18n/config.js#getSavedLanguage` (with `fallbackLng: 'en'`). Every user-facing string MUST go through `useTranslation()` / `t()` — never a hardcoded English literal in JSX, error messages, placeholders, aria-labels, button labels, or page chrome. When you add or change a translation key, update BOTH `src/i18n/locales/en/<ns>.json` AND `src/i18n/locales/es/<ns>.json` in the same commit (Spanish users see whatever is in `es`).
-
-View-specific namespaces living under `settings.json` (both en + es):
-
-- `settings.aboutTab` — Acerca de / About tab content (tagline, links, hosted CTA, Pro feature cards, license footer).
-- `settings.onboarding` — first-run wizard: git step (`git.title`, `git.nameLabel`, `git.errors.*`), agents step (`agents.title`, `agents.providerTitles.<provider>`, `agents.status.*`, `agents.loginButton`), step progress (`steps.git`, `steps.agents`, `steps.required`), wizard buttons (`buttons.previous`, `buttons.next`, `buttons.saving`, `buttons.completing`, `buttons.completeSetup`, `buttons.completeFailed`).
-
-For **curated plugins** (those listed as recommendations in `src/components/plugins/view/PluginSettingsTab.tsx#OFFICIAL_PLUGIN_RECOMMENDATIONS` and `#UNOFFICIAL_PLUGIN_RECOMMENDATIONS`), the installed `PluginCard` prefers the translated name/description from `pluginSettings.<translationKey>.name` / `.description` over the raw `plugin.displayName` / `plugin.description` from the plugin's own `manifest.json` (e.g. the project-stats plugin shows "Estadísticas del proyecto" even though its manifest is English-only). Third-party plugins without a matching recommendation still show their hardcoded manifest values.
-
-### i18n gotcha — namespace-relative paths in `t(...)`
-
-When you bind the hook to a namespace (`const { t } = useTranslation('settings')`), the `t()` calls take **namespace-relative** paths. The wrong form renders the literal key string in the UI (e.g. `settings.minimax.usage.sectionTitle` appears verbatim):
-
-```tsx
-// ❌ WRONG — duplicates the namespace prefix, i18next looks for
-//    settings.settings.minimax.usage.X and falls back to the key literal.
-const { t } = useTranslation('settings');
-t('settings.minimax.usage.sectionTitle');
-
-// ✅ RIGHT — path is relative to the bound namespace.
-const { t } = useTranslation('settings');
-t('minimax.usage.sectionTitle');
-```
-
-How to audit: `grep -n "t('settings\." src/components/` — any hit in a component that uses `useTranslation('settings')` is a bug. Components that use the default namespace (no argument to `useTranslation`) can use either absolute paths (`settings.foo.bar`) or relative ones (`foo.bar`) interchangeably. The pattern was just broken when we wired `MiniMaxSettingsTab.tsx` to the namespace explicitly; a `sed -i "s/t('settings\\.minimax\\./t('minimax./g"` on the file fixed all 21 sites at once. The same convention applies to `useTranslation('chat')`, `useTranslation('common')`, etc.
-
-### i18n across 11 locales — full-translation + verbatim English fallback
-
-The repo ships 11 locale files under `src/i18n/locales/<locale>/`: `en`, `es`, `de`, `fr`, `it`, `ja`, `ko`, `ru`, `tr`, `zh-CN`, `zh-TW`. Convention:
-
-- **`en` and `es`** — full native translation. Spanish is the default UI language (`getSavedLanguage` returns `'es'` with `fallbackLng: 'en'`).
-- **Other 9 locales** — for new key blocks, paste the English verbatim into each file as a placeholder. The `fallbackLng: 'en'` setting means even if the key is missing the user sees English, but pasting the verbatim copy makes future translation a search-and-replace instead of a structural change. Don't bother translating to all 11 in one PR — translator passes can pick them up later.
-
-Use a small Python script (run from `/opt/cloud-cli2026`) to insert a block into all 9 fallback locales at once. The pattern that worked for the `minimax.usage.*` and `permissions.opencode.*` blocks:
-
-```python
-import json
-LOCALES = ["de","fr","it","ja","ko","ru","tr","zh-CN","zh-TW"]
-BLOCK = '''    "myNewKey": {
-      "title": "My title",
-      ...
-    },
-'''
-for loc in LOCALES:
-    path = f"src/i18n/locales/{loc}/settings.json"
-    data = json.load(open(path))
-    parent = data["settings"]  # or wherever the new block goes
-    parent["myNewKey"] = {"title": "My title", ...}
-    open(path, "w").write(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
-```
-
-Validate with `for loc in en es de fr it ja ko ru tr zh-CN zh-TW; do python3 -c "import json; json.load(open('src/i18n/locales/$loc/settings.json'))"; done` after the script runs — `json.dumps` will silently produce invalid JSON if your block has a trailing comma or quote mismatch.
-
-### Security defaults
-
-All Claude Code tools are disabled by default in the UI — users opt in via Settings. Backend API routes (except `/api/auth`, `/health`, static, and `/api/browser-use-mcp`) require `authenticateToken`. Workspace path operations (`server/utils/...`, project file APIs) must validate that resolved paths stay under the project root before any filesystem mutation.
-
-## Source control & commit UX
-
-The git panel (`src/components/git-panel/`) is the user-facing surface for staging, committing, and pushing. The backend endpoints live in `server/routes/git.js` (single router, ~1800 lines). The husky hooks at `.husky/commit-msg` (commitlint) and `.husky/pre-commit` (lint-staged) run for **every** `git commit`, including those spawned by the backend — there is no bypass.
-
-### Commit message handling — auto-prefix for free-form text
-
-The project's `commitlint.config.js` extends `@commitlint/config-conventional`, so a commit subject must start with a type (`feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`) followed by `:` (and optionally `(scope)`). Most users in the UI just type free-form text, so `server/routes/git.js` exposes `ensureConventionalCommitPrefix(rawMessage)`:
-
-- If the message already starts with a recognized type prefix (case-insensitive, optional `(scope)`, with or without `!`), return it unchanged.
-- Otherwise prepend `chore: ` so commitlint accepts it.
-
-`POST /api/git/commit` calls this helper before spawning `git commit -m`. `POST /api/git/initial-commit` is unaffected (its subject is the literal `"Initial commit"`, which is already Conventional-Commits-shaped: `chore`-prefixed by the helper on the fly). Keep the regex and the type list in `CONVENTIONAL_COMMIT_TYPES` in sync with `commitlint.config.js`.
-
-### Commit error surfacing (no more silent failures)
-
-`POST /api/git/commit` catches the `git` spawn error and surfaces a translated 400 instead of a generic 500. The handler in `server/routes/git.js` (the `catch` of `/commit`) recognizes these stderr patterns and returns a user-readable `details` field:
-
-- `subject may not be empty [subject-empty]` / `type may not be empty [type-empty]` from commitlint → "Commit message must follow Conventional Commits: `type(scope): subject`" with the valid type list and an example. (Only reachable if `ensureConventionalCommitPrefix` was bypassed.)
-- `Please tell me who you are` / `unable to auto-detect email address` from git → "Git identity not configured" with a pointer to Settings → Git Configuration.
-- `nothing to commit` → 400 with a clear "All selected files are already committed" message.
-
-The frontend (`useGitPanelController.commitChanges`) reads `data.details` and passes `data.error` into `setOperationError(...)`, which the `GitPanelHeader` renders as a dismissable banner. The previous behavior — `console.error` and silent UI — is gone. **Never** call `console.error` for a `data.success === false` response from a git endpoint; always go through `setOperationError`.
-
-### Git panel — don't refetch on session_upserted
-
-The version-control panel is the only place in the app that visually re-fetched (and re-mounted `ChangesView`) every few seconds while Claude was active. Root cause: `useProjectsState` rebuilds `selectedProject` on every `session_upserted` (per-tool-call, since the provider writes a JSONL entry per tool invocation), and `useGitPanelController`'s main `useEffect` had `selectedProject` in its dep array, so it re-ran and called `fetchGitStatus()` constantly. `key={selectedProject.fullPath}` on `<ChangesView>` also re-mounted the subtree on each new object identity.
-
-The fix lives in `src/components/git-panel/view/GitPanel.tsx`. The component wraps the incoming `selectedProject` in `useMemo` keyed on `[selectedProject?.projectId, selectedProject?.fullPath]`, returning a copy with `sessions: []` (the panel never reads them). The stabilized object is passed into `useGitPanelController`, into `useRevertLocalCommit`, and into `<ChangesView key={stableProject.fullPath} />`. From that point on, the controller's effects (which depend on `projectId`/`fullPath`) fire exactly once per real project change. To verify, add a temporary `console.log('[DEBUG-GIT-PANEL] render', Date.now())` in the component body — without the fix it logs continuously while Claude runs; with the fix it logs twice (mount + first project change) and goes quiet.
-
-### File streaming endpoint — reject directories explicitly
-
-`server/index.js` exposes a binary file streaming endpoint. The old code called `fs.createReadStream(resolved)` without checking whether the path was a directory, producing a mid-stream `EISDIR: illegal operation on a directory, read` and cutting the response. The fix calls `fsPromises.stat(resolved)` first and returns `400 "Path is a directory, not a file"` if `isDirectory()`. If you add new file-serving endpoints, mirror the same `stat().isFile()` guard.
-
-### Provider log noise
-
-Two recurring entries in the error log were noise, not real failures:
-
-- `SDK query error: ede_diagnostic result_type=user last_content_type=n/a stop_reason=tool_use` in `server/claude-sdk.js`. The Anthropic SDK reports sessions that ended on `stop_reason: tool_use` (a normal continuation that resumes on the next user message) as `ede_diagnostic` errors. The catch now detects `/ede_diagnostic/` and demotes it to `console.warn`.
-- `[Chat] Provider runtime "opencode" failed: OpenCode CLI process was terminated` in `server/modules/websocket/services/chat-websocket.service.ts`. The OpenCode CLI child gets killed whenever PM2 restarts the Node parent. The catch detects this specific message for the `opencode` provider and demotes it to `console.warn`; all other provider failures stay at `console.error`.
-
-## Environment
-
-- Node 22+ (`.nvmrc`). `postinstall` runs `scripts/fix-node-pty.js` to patch the native `node-pty` for the current Node ABI; if `npm install` fails on `node-pty`, this script is the first place to look.
-- Vite dev server proxy assumes the backend on `SERVER_PORT` (default `3001`) and frontend on `VITE_PORT` (default `5173`); change with env vars (see `.env.example`). `HOST=0.0.0.0` exposes on the LAN; use `127.0.0.1` to lock down.
-- `CONTEXT_WINDOW` (default `160000`) controls the session token-usage denominator for Claude providers.
-- `CLAUDE_CLI_PATH` overrides the Claude binary name (defaults to `claude`).
-- `DATABASE_PATH` overrides the SQLite file location (default `~/.cloudcli/auth.db`).
-- `FS_CONCURRENCY` (default `64`) bounds parallel filesystem ops in `getFileTree` — important for NFS/SMB workspaces.
-
-## Entry points
-
-- npm binary: `dist-server/server/cli.js` (`cloudcli start | status | sandbox | browser-use-mcp | help | version`).
-- HTTP server: `dist-server/server/index.js` (or `server/index.js` via `tsx`).
-- Electron shell: `electron/main.js` (build with `npm run desktop:dist:mac` / `:win`).
-- Frontend: `src/main.jsx` → `src/App.tsx`.
-
-## Built-in MCP servers ("Managed by CloudCLI")
-
-MCP servers whose name starts with `cloudcli-` are owned by CloudCLI itself — registered/unregistered automatically when the user toggles the corresponding feature, exposed read-only in Settings → MCP Servers with the lock badge. The pattern (codified by `modules/browser-use/`) is:
-
-1. **Module** under `server/modules/<name>/` with `index.ts` barrel, `<name>.service.ts`, `<name>.routes.ts` (REST), `<name>-mcp.routes.ts` (HTTP bridge).
-2. **Stdio MCP** at `server/<name>-mcp.ts` (top-level, not in the module folder). JSON-RPC newline-delimited, 1-second sidecar cache, `fetch` to the bridge with bearer token.
-3. **Sidecar** at `~/.cloudcli/<name>/current-chat-run.json` written by `chat-run-registry.service.ts` on `startRun`, cleared on `completeRun` (read-before-delete to avoid clobbering newer runs).
-4. **REST mount** in `server/index.js` before the protected routes: `app.use('/api/<name>-mcp', <name>McpRoutes)` (token-gated by `<name>Service.getMcpToken()`) and `app.use('/api/<name>', authenticateToken, <name>Routes)`.
-5. **CLI subcommand** in `server/cli.js#startMcpFn()` + `case '<name>-mcp':` in the main switch.
-6. **MCP registration** via `providerMcpService.addMcpServerToAllProviders({ name: 'cloudcli-<name>', scope: 'user', transport: 'stdio', command, args, env: { CLOUDCLI_<NAME>_MCP_TOKEN, CLOUDCLI_<NAME>_API_URL } })`, triggered from the service's `updateSettings({ enabled: true })`.
-7. **Shutdown hook** in `server/index.js#shutdownRuntimeServices()` calls `<name>Service.stopAll()` for in-memory cleanup.
-8. **Settings persistence** in `app_config` keys: `<name>_settings` (feature toggle + any extra fields you need), `<name>_mcp_token`. Domain state can live elsewhere — for `cloudcli-browser-use` it lives in SQLite and per-chat-run sidecar files; pick the storage that fits the feature.
-
-To add a new managed MCP: copy a sibling (`browser-use` is the most complete example), pick a `cloudcli-<feature>` name, and follow the eight steps above. i18n strings `settings.mcpServers.managed.{badge,hint}` and the read-only badge UI in `src/components/mcp/view/McpServers.tsx#isManagedServer` are already in place — the prefix check is the only "magic" you need.
-
-### Variante: managed MCP sin HTTP bridge (`cloudcli-minimax`)
-
-El patrón completo de ocho pasos aplica cuando CloudCLI actúa de proxy entre el agente y un servicio externo (`browser-use` es el ejemplo canónico). **Pero** hay managed MCPs donde el upstream package habla directo con su propia API pública — en ese caso se omiten los pasos 2, 3, y 5 (stdio wrapper, sidecar, CLI subcommand):
-
-- `server/modules/minimax/` — `cloudcli-minimax` envuelve el PyPI `minimax-coding-plan-mcp` que expone `web_search` y `understand_image`. El package habla directo con `https://api.minimax.io` usando la `MINIMAX_API_KEY` que el usuario pega. No hay bridge HTTP, no hay sidecar de chat-run, no hay CLI subcommand — solo `minimax.service.ts` + `minimax.routes.ts` + la lógica de registrar/quitar el MCP en los providers vía `providerMcpService`. El tab **Suscripción y uso** de la UI usa `mmx quota show --output json --non-interactive` (cliente CLI standalone, no el MCP wrapper) — por eso el spawn va por `spawnSync('which', ['mmx'])` + `spawnSync('mmx', ['quota', 'show', '--output', 'json', '--non-interactive'])` con `runner` inyectable para tests y caché de 60s en proceso. Ver `docs/mcp/minimax.md` § "Quota".
-
-Si en el futuro agregás un MCP similar (package upstream ya habla HTTP por su cuenta), seguí el patrón de `minimax/` en vez del de `browser-use/`. La regla mental: **¿CloudCLI necesita intermediar entre el agente y el servicio upstream?** Sí → patrón `browser-use` (completo). No → patrón `minimax` (mínimo).
-
-### Tests para módulos managed MCP
-
-Cada módulo managed (browser-use, minimax, próximos) tiene un test suite colocalizado en `server/modules/<name>/tests/<name>.service.test.ts`. Patrón obligatorio:
-
-1. **`clear<Thing>()` + `set<Thing>(partial)`** en cada test que toque el `app_config` row del módulo — el patrón `clearSettings()` en `minimax.service.test.ts:20` es la referencia. Sin cleanup transactional, depende de `try { ... } finally { clear<Thing>() }`.
-2. **Para spawners externos** (como el `mmx` shell de MiniMax), exponer `__setUsageRunnerForTests(fn)` y `__clearUsageCacheForTests()` como exports nombrados con prefijo `__`. El runner inyectable evita monkey-patching `node:child_process` que `t.mock.module` no soporta para built-ins.
-3. **`spawnSync` directo sin stub** es aceptable solo cuando el binario está garantizado en el environment de CI (como `uvx` en `getStatus` — el test asume que está en PATH y deja que `probeUvx` retorne `true`). Para caminos donde el binary podría no estar, **siempre** usar el runner inyectable.
-
-Si tu nuevo módulo tiene una dependencia externa binaria, seguí este patrón desde el día uno — refactorizar después es más caro.
-
-## Per-provider docs — `docs/providers/*.md` + the testing-status column
-
-Each provider has its own doc under `docs/providers/`: `claude.md`, `codex.md`, `cursor.md`, `gemini.md`, `opencode.md`, `qwen.md` (Qwen is currently a planning doc — Phases 1–8 of the integration are still pending in TaskList #87–#96). `docs/providers/agente.md` is the index: it has the **Provider catalog** (5-row table linking to each per-provider doc) and the **Capabilities matrix** (auth command, permission modes, `supportsPermissionRequests`, interactive UI, `tool_use` renderer, custom providers, status).
-
-When you change any of the per-provider docs, **update `agente.md` in the same commit** so the index stays consistent. The Capabilities matrix is the single source of truth for "what does each provider support and how does the UI render it" — update it whenever a capability flag flips, a new permission mode lands, or a tool renderer is added.
-
-The matrix has two status columns that are deliberately separate:
-
-- **Engineering status** — Production / Phase-0 ready / etc. Means the code path is shipped.
-- **User testing status** — ✅ Tested by user / ⚠️ Not tested by user (in development) / 🛠 In planning. Means **you personally** have run real sessions against this provider. Other users may have a different mix.
-
-This split was added because "Production" engineering status does NOT mean you validated it on your own machine. Update the testing-status column whenever your own usage of a provider changes — it's a personal reality check, not a project-wide signal. Legend block in `docs/providers/agente.md:23-36`.
-
-## Task queue (external plugin only)
-
-CloudCLI ships **without** a native task queue. The only built-in option is the external `TadMSTR/cloudcli-plugin-task-queue` plugin, installed via Settings → Plugins.
-
-- Separate Node subprocess, reads YAML from `~/.claude/task-queue/*.yml`, requires the `task-queue-mcp` HTTP service in `:8485` for mutations, exposes UI in a tab plugin slot. Use when you need the schema-locked YAML interop with a separate task dispatcher.
-
-**Skill `/task-queue`** (installed at `~/.claude/skills/task-queue/SKILL.md`) teaches Claude (me) how to use the plugin.
+- `server/modules/providers/README.md` — provider contract & checklist for adding one.
+- `docs/providers/agente.md` — capability/UI matrix per provider.
+- `docs/voice.md` — voice module architecture (orthogonal to providers).
+- `docs/mcp/minimax.md` — MiniMax MCP module reference.
+- `CHANGELOG.md` — release history (release-it keeps this updated).
+- `CONTRIBUTING.md` — commit conventions (`commitlint.config.js` enforces Conventional Commits via Husky).

@@ -41,6 +41,10 @@ const getProviderCommand = ({
     return 'opencode auth login';
   }
 
+  if (provider === 'qwen') {
+    return 'qwen --version';
+  }
+
   return 'gemini status';
 };
 
@@ -49,6 +53,7 @@ const getProviderTitle = (provider: LLMProvider) => {
   if (provider === 'cursor') return 'Cursor CLI Login';
   if (provider === 'codex') return 'Codex CLI Login';
   if (provider === 'opencode') return 'OpenCode CLI Login';
+  if (provider === 'qwen') return 'Qwen CLI Configuration';
   return 'Gemini CLI Configuration';
 };
 

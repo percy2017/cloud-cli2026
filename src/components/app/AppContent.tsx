@@ -246,9 +246,18 @@ function AppContentInner() {
           onNavigateToSession={(targetSessionId: string, options) =>
             navigate(`/session/${targetSessionId}`, { replace: Boolean(options?.replace) })
           }
-          onSessionEstablished={(targetSessionId, context) =>
-            registerOptimisticSession({ sessionId: targetSessionId, ...context })
-          }
+          onSessionEstablished={() => {
+            // The previous implementation prepended an optimistic sidebar row
+            // for the new chat here. It produced a duplicate row every time:
+            // once we accept the WS provider session id, the watcher emits a
+            // canonical `session_upserted` (with the app id pre-aliased via
+            // the chat-run registry), so the optimistic prepend only existed
+            // to win the ~1s race against that watcher event — and won only
+            // by creating a second row when the race was lost.
+            // The watcher event + the URL `/session/<appId>` are enough on
+            // their own; the sidebar auto-scrolls to the new top row once the
+            // upsert lands.
+          }}
           onShowSettings={openSettings}
           externalMessageUpdate={externalMessageUpdate}
           newSessionTrigger={newSessionTrigger}

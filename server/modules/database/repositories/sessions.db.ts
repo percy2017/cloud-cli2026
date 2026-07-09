@@ -115,6 +115,46 @@ export const sessionsDb = {
       return existing.session_id;
     }
 
+    // Race-window de-dupe: when the app's session gateway creates a row first
+    // (`createAppSession` -> `provider_session_id IS NULL`) and the watcher
+    // races ahead to discover the same conversation on disk before
+    // `assignProviderSessionId` lands, we would otherwise INSERT a second
+    // row keyed by the provider-native id and the sidebar would render
+    // both. Detect a recent unassigned row for the same (provider,
+    // project_path) tuple — within the last 60s, the window during which
+    // a brand-new chat would still be allocating its provider id — and
+    // bind the provider id to that row instead of creating a duplicate.
+    const orphan = db
+      .prepare(
+        `SELECT session_id FROM sessions
+         WHERE provider = ?
+           AND project_path = ?
+           AND provider_session_id IS NULL
+           AND session_id <> ?
+           AND created_at >= datetime('now', '-60 seconds')
+         ORDER BY created_at DESC
+         LIMIT 1`
+      )
+      .get(provider, normalizedProjectPath, providerSessionId) as { session_id: string } | undefined;
+
+    if (orphan) {
+      db.prepare(
+        `UPDATE sessions SET
+           provider_session_id = ?,
+           jsonl_path = COALESCE(jsonl_path, ?),
+           custom_name = COALESCE(custom_name, ?),
+           updated_at = COALESCE(?, CURRENT_TIMESTAMP)
+         WHERE session_id = ?`
+      ).run(
+        providerSessionId,
+        jsonlPath ?? null,
+        customName ?? null,
+        updatedAtValue,
+        orphan.session_id,
+      );
+      return orphan.session_id;
+    }
+
     // Sessions created outside the app (directly via the provider CLI) are
     // keyed by the provider-native id for both columns. The ON CONFLICT path
     // covers legacy rows that predate the provider_session_id mapping.

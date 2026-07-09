@@ -19,7 +19,8 @@
     "cursor": "Cursor",
     "codex": "Codex",
     "gemini": "Gemini",
-    "opencode": "OpenCode"
+    "opencode": "OpenCode",
+    "qwen": "Qwen"
   },
   "tools": {
     "settings": "Ajustes de herramientas",
@@ -91,6 +92,7 @@
     "modes": {
       "default": "Modo predeterminado",
       "auto": "Modo automático",
+      "autoEdit": "Auto-editar",
       "acceptEdits": "Aceptar ediciones",
       "bypassPermissions": "Omitir permisos",
       "plan": "Modo planificación"
@@ -163,7 +165,8 @@
       "codex": "Listo para usar Codex con {{model}}. Empieza a escribir tu mensaje abajo.",
       "gemini": "Listo para usar Gemini con {{model}}. Empieza a escribir tu mensaje abajo.",
       "opencode": "Listo para usar OpenCode con {{model}}. Empieza a escribir tu mensaje abajo.",
-      "default": "Selecciona un proveedor arriba para empezar"
+      "default": "Selecciona un proveedor arriba para empezar",
+      "qwen": "Listo para usar Qwen con {{model}}. Empieza a escribir tu mensaje abajo."
     },
     "pressToSearch": "Pulsa <kbd>{{shortcut}}</kbd> para buscar sesiones, archivos y commits"
   },

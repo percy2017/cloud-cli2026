@@ -68,6 +68,12 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
     assistantCopyContent.trim().length > 0 &&
     !isCommandOrFileEditToolResponse &&
     !message.isThinking;
+  // Speak is intentionally NOT gated by `isCommandOrFileEditToolResponse` — the
+  // user can still want to hear the command/diff narrated even when copying it
+  // would be redundant.
+  const shouldShowAssistantSpeakControl = message.type === 'assistant' &&
+    assistantCopyContent.trim().length > 0 &&
+    !message.isThinking;
 
 
   const formattedTime = useMemo(() => new Date(message.timestamp).toLocaleTimeString(), [message.timestamp]);
@@ -155,7 +161,9 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
                             ? t('messageTypes.gemini')
                             : provider === 'opencode'
                               ? t('messageTypes.opencode', { defaultValue: 'OpenCode' })
-                              : t('messageTypes.claude'))}
+                              : provider === 'qwen'
+                                ? t('messageTypes.qwen', { defaultValue: 'Qwen' })
+                                : t('messageTypes.claude'))}
               </div>
             </div>
           )}
@@ -317,6 +325,7 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
                   </Markdown>
                   <div className="mt-3 flex items-center text-[11px]">
                     <MessageCopyControl content={String(message.content || '')} messageType="assistant" />
+                    <MessageSpeakControl content={String(message.content || '')} />
                   </div>
                 </ReasoningContent>
               </Reasoning>
@@ -381,12 +390,12 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
               </div>
             )}
 
-            {(shouldShowAssistantCopyControl || !isGrouped) && (
+            {(shouldShowAssistantCopyControl || shouldShowAssistantSpeakControl || !isGrouped) && (
               <div className="mt-1 flex w-full items-center gap-2 text-[11px] text-gray-400 dark:text-gray-500">
                 {shouldShowAssistantCopyControl && (
                   <MessageCopyControl content={assistantCopyContent} messageType="assistant" />
                 )}
-                {shouldShowAssistantCopyControl && (
+                {shouldShowAssistantSpeakControl && (
                   <MessageSpeakControl content={assistantCopyContent} />
                 )}
                 {!isGrouped && <span>{formattedTime}</span>}

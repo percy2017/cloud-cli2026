@@ -8,6 +8,7 @@ import type { MarkSessionIdle, MarkSessionProcessing } from '../../../hooks/useS
 import type { PendingPermissionRequest } from '../types/types';
 import type { ProjectSession, LLMProvider } from '../../../types/app';
 import type { SessionStore, NormalizedMessage } from '../../../stores/useSessionStore';
+import { AUTO_PLAY_TRIGGER_EVENT } from './useAutoPlayLastMessage';
 
 const isActionablePermissionRequest = (request: { toolName?: unknown } | null | undefined): boolean => {
   return request?.toolName !== 'ExitPlanMode' && request?.toolName !== 'exit_plan_mode';
@@ -252,6 +253,14 @@ export function useChatRealtimeHandlers({
           if (msg.success !== false) {
             showCompletionTitleIndicator();
             void playChatCompletionSound();
+            // Notify the auto-play hook — only on successful, non-aborted runs
+            // so we don't read aborted output aloud. The hook decides whether
+            // to actually speak based on the `ttsAutoPlay` toggle.
+            if (typeof window !== 'undefined' && sid) {
+              window.dispatchEvent(
+                new CustomEvent(AUTO_PLAY_TRIGGER_EVENT, { detail: { sessionId: sid } }),
+              );
+            }
           }
 
           // The session id is stable for the whole conversation (allocated

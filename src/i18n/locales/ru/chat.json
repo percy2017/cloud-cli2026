@@ -18,7 +18,8 @@
     "claude": "Claude",
     "cursor": "Cursor",
     "codex": "Codex",
-    "gemini": "Gemini"
+    "gemini": "Gemini",
+    "qwen": "Qwen"
   },
   "tools": {
     "settings": "Настройки инструмента",
@@ -92,7 +93,8 @@
       "auto": "Auto Mode",
       "acceptEdits": "Принимать правки",
       "bypassPermissions": "Обход разрешений",
-      "plan": "Режим планирования"
+      "plan": "Режим планирования",
+      "autoEdit": "Auto-edit"
     },
     "descriptions": {
       "default": "Только доверенные команды (ls, cat, grep, git status и т.д.) выполняются автоматически. Другие команды пропускаются. Может записывать в рабочее пространство.",
@@ -153,7 +155,8 @@
       "cursor": "Готов использовать Cursor с {{model}}. Начните вводить сообщение ниже.",
       "codex": "Готов использовать Codex с {{model}}. Начните вводить сообщение ниже.",
       "gemini": "Готов использовать Gemini с {{model}}. Начните вводить сообщение ниже.",
-      "default": "Выберите провайдера выше для начала"
+      "default": "Выберите провайдера выше для начала",
+      "qwen": "Ready to use Qwen with {{model}}. Start typing your message below."
     },
     "pressToSearch": "Нажмите <kbd>{{shortcut}}</kbd>, чтобы искать сессии, файлы и коммиты"
   },

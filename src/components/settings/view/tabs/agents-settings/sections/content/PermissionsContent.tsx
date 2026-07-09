@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { AlertTriangle, Plus, Shield, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+
 import { Button, Input } from '../../../../../../../shared/view/ui';
-import type { CodexPermissionMode, GeminiPermissionMode } from '../../../../../types/types';
+import type { CodexPermissionMode, GeminiPermissionMode, QwenPermissionMode } from '../../../../../types/types';
 
 const COMMON_CLAUDE_TOOLS = [
   'Bash(git log:*)',
@@ -806,7 +807,135 @@ function OpencodePermissions({
   );
 }
 
-type PermissionsContentProps = ClaudePermissionsProps | CursorPermissionsProps | CodexPermissionsProps | GeminiPermissionsProps | OpencodePermissionsProps;
+type QwenPermissionsProps = {
+  agent: 'qwen';
+  permissionMode: QwenPermissionMode;
+  onPermissionModeChange: (value: QwenPermissionMode) => void;
+};
+
+function QwenPermissions({ permissionMode, onPermissionModeChange }: Omit<QwenPermissionsProps, 'agent'>) {
+  const { t } = useTranslation('settings');
+
+  // Qwen 0.19.x CLI permission modes. Verified by probing the CLI:
+  //   - 'default'           → no flag (user approves each tool)
+  //   - 'plan'              → --approval-mode plan (no tool execution)
+  //   - 'auto-edit'         → --approval-mode auto-edit (auto-approve edits)
+  //   - 'bypassPermissions' → --approval-mode yolo (auto-approve everything)
+  const modes: Array<{
+    value: QwenPermissionMode;
+    titleKey: string;
+    descriptionKey: string;
+    color: 'default' | 'blue' | 'green' | 'orange';
+  }> = [
+    {
+      value: 'default',
+      titleKey: 'permissions.qwen.modes.default.title',
+      descriptionKey: 'permissions.qwen.modes.default.description',
+      color: 'default',
+    },
+    {
+      value: 'plan',
+      titleKey: 'permissions.qwen.modes.plan.title',
+      descriptionKey: 'permissions.qwen.modes.plan.description',
+      color: 'blue',
+    },
+    {
+      value: 'auto-edit',
+      titleKey: 'permissions.qwen.modes.autoEdit.title',
+      descriptionKey: 'permissions.qwen.modes.autoEdit.description',
+      color: 'green',
+    },
+    {
+      value: 'bypassPermissions',
+      titleKey: 'permissions.qwen.modes.yolo.title',
+      descriptionKey: 'permissions.qwen.modes.yolo.description',
+      color: 'orange',
+    },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <div className="space-y-4">
+        <div className="flex items-center gap-3">
+          <Shield className="h-5 w-5 text-green-500" />
+          <h3 className="text-lg font-medium text-foreground">
+            {t('permissions.qwen.permissionMode')}
+          </h3>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          {t('permissions.qwen.description')}
+        </p>
+
+        {modes.map((mode) => {
+          const selected = permissionMode === mode.value;
+          const colorClasses = mode.color === 'default'
+            ? 'border-border bg-accent'
+            : mode.color === 'blue'
+              ? 'border-blue-400 bg-blue-50 dark:border-blue-600 dark:bg-blue-900/20'
+              : mode.color === 'green'
+                ? 'border-green-400 bg-green-50 dark:border-green-600 dark:bg-green-900/20'
+                : 'border-orange-400 bg-orange-50 dark:border-orange-600 dark:bg-orange-900/20';
+          const idleClasses = 'border-border bg-card/50 active:border-border active:bg-accent/50';
+          const titleColor = mode.color === 'default'
+            ? 'text-foreground'
+            : mode.color === 'blue'
+              ? 'text-blue-900 dark:text-blue-100'
+              : mode.color === 'green'
+                ? 'text-green-900 dark:text-green-100'
+                : 'text-orange-900 dark:text-orange-100';
+          const subtitleColor = mode.color === 'default'
+            ? 'text-muted-foreground'
+            : mode.color === 'blue'
+              ? 'text-blue-700 dark:text-blue-300'
+              : mode.color === 'green'
+                ? 'text-green-700 dark:text-green-300'
+                : 'text-orange-700 dark:text-orange-300';
+          const isYolo = mode.value === 'bypassPermissions';
+          return (
+            <div
+              key={mode.value}
+              className={`cursor-pointer rounded-lg border p-4 transition-all ${selected ? colorClasses : idleClasses}`}
+              onClick={() => onPermissionModeChange(mode.value)}
+            >
+              <label className="flex cursor-pointer items-start gap-3">
+                <input
+                  type="radio"
+                  name="qwenPermissionMode"
+                  checked={selected}
+                  onChange={() => onPermissionModeChange(mode.value)}
+                  className={`mt-1 h-4 w-4 ${mode.color === 'orange' ? 'text-orange-600' : 'text-green-600'}`}
+                />
+                <div>
+                  <div className={`flex items-center gap-2 font-medium ${titleColor}`}>
+                    {t(mode.titleKey)}
+                    {isYolo && <AlertTriangle className="h-4 w-4" />}
+                  </div>
+                  <div className={`text-sm ${subtitleColor}`}>
+                    {t(mode.descriptionKey)}
+                  </div>
+                </div>
+              </label>
+            </div>
+          );
+        })}
+
+        <details className="text-sm">
+          <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
+            {t('permissions.qwen.technicalDetails')}
+          </summary>
+          <div className="mt-2 space-y-2 rounded-lg bg-muted/50 p-3 text-xs text-muted-foreground">
+            <p><strong>{t('permissions.qwen.modes.default.title')}:</strong> {t('permissions.qwen.technicalInfo.default')}</p>
+            <p><strong>{t('permissions.qwen.modes.plan.title')}:</strong> {t('permissions.qwen.technicalInfo.plan')}</p>
+            <p><strong>{t('permissions.qwen.modes.autoEdit.title')}:</strong> {t('permissions.qwen.technicalInfo.autoEdit')}</p>
+            <p><strong>{t('permissions.qwen.modes.yolo.title')}:</strong> {t('permissions.qwen.technicalInfo.yolo')}</p>
+          </div>
+        </details>
+      </div>
+    </div>
+  );
+}
+
+type PermissionsContentProps = ClaudePermissionsProps | CursorPermissionsProps | CodexPermissionsProps | GeminiPermissionsProps | OpencodePermissionsProps | QwenPermissionsProps;
 
 export default function PermissionsContent(props: PermissionsContentProps) {
   if (props.agent === 'claude') {
@@ -823,6 +952,10 @@ export default function PermissionsContent(props: PermissionsContentProps) {
 
   if (props.agent === 'opencode') {
     return <OpencodePermissions {...props} />;
+  }
+
+  if (props.agent === 'qwen') {
+    return <QwenPermissions {...props} />;
   }
 
   return <CodexPermissions {...props} />;

@@ -15,6 +15,7 @@ const FALLBACK_DEFAULT_MODEL: Record<LLMProvider, string> = {
   codex: 'gpt-5.4',
   gemini: 'gemini-3.1-pro-preview',
   opencode: 'anthropic/claude-sonnet-4-5',
+  qwen: 'qwen3-coder-plus',
 };
 
 /**
@@ -22,6 +23,12 @@ const FALLBACK_DEFAULT_MODEL: Record<LLMProvider, string> = {
  * matrix (`GET /api/providers/capabilities`) has loaded. The backend is the
  * source of truth; this mirror exists so the composer renders sensibly on
  * first paint and when the capabilities request fails.
+ *
+ * Qwen's 4 modes (default/plan/auto-edit/bypassPermissions) mirror what
+ * `qwen --approval-mode` accepts (verified against qwen 0.19.8). They must
+ * stay in sync with server/modules/providers/services/provider-capabilities.service.ts
+ * so the Tab-to-cycle affordance in the chat composer shows the right count
+ * even on first paint.
  */
 const FALLBACK_PERMISSION_MODES: Record<LLMProvider, PermissionMode[]> = {
   claude: ['default', 'auto', 'acceptEdits', 'bypassPermissions', 'plan'],
@@ -29,6 +36,7 @@ const FALLBACK_PERMISSION_MODES: Record<LLMProvider, PermissionMode[]> = {
   codex: ['default', 'acceptEdits', 'bypassPermissions'],
   gemini: ['default', 'acceptEdits', 'bypassPermissions', 'plan'],
   opencode: ['default'],
+  qwen: ['default', 'plan', 'auto-edit', 'bypassPermissions'],
 };
 
 type ProviderCapabilities = {
@@ -93,6 +101,9 @@ export function useChatProviderState({ selectedSession, selectedProject }: UseCh
   const [opencodeModel, setOpenCodeModel] = useState<string>(() => {
     return localStorage.getItem('opencode-model') || FALLBACK_DEFAULT_MODEL.opencode;
   });
+  const [qwenModel, setQwenModel] = useState<string>(() => {
+    return localStorage.getItem('qwen-model') || FALLBACK_DEFAULT_MODEL.qwen;
+  });
 
   /**
    * Backend-owned capability matrix keyed by provider. Drives the permission
@@ -141,12 +152,18 @@ export function useChatProviderState({ selectedSession, selectedProject }: UseCh
       return;
     }
 
+    if (targetProvider === 'qwen') {
+      setQwenModel(model);
+      localStorage.setItem('qwen-model', model);
+      return;
+    }
+
     setOpenCodeModel(model);
     localStorage.setItem('opencode-model', model);
   }, []);
 
   const loadProviderModels = useCallback(async (options: { bypassCache?: boolean } = {}) => {
-    const providers: LLMProvider[] = ['claude', 'cursor', 'codex', 'gemini', 'opencode'];
+    const providers: LLMProvider[] = ['claude', 'cursor', 'codex', 'gemini', 'opencode', 'qwen'];
     const requestId = providerModelsRequestIdRef.current + 1;
     providerModelsRequestIdRef.current = requestId;
     const isHardRefresh = options.bypassCache === true;
@@ -325,6 +342,19 @@ export function useChatProviderState({ selectedSession, selectedProject }: UseCh
   }, [providerModelCatalog.opencode, opencodeModel]);
 
   useEffect(() => {
+    const qwen = providerModelCatalog.qwen;
+    if (qwen) {
+      const next = pickStoredOrCurrent('qwen-model', qwenModel, qwen);
+      if (next !== qwenModel) {
+        setQwenModel(next);
+      }
+      if (localStorage.getItem('qwen-model') !== next) {
+        localStorage.setItem('qwen-model', next);
+      }
+    }
+  }, [providerModelCatalog.qwen, qwenModel]);
+
+  useEffect(() => {
     if (!selectedSession?.id) {
       return;
     }
@@ -434,6 +464,8 @@ export function useChatProviderState({ selectedSession, selectedProject }: UseCh
     setGeminiModel,
     opencodeModel,
     setOpenCodeModel,
+    qwenModel,
+    setQwenModel,
     permissionMode,
     setPermissionMode,
     pendingPermissionRequests,

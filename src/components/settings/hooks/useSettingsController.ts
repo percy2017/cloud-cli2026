@@ -19,6 +19,7 @@ import type {
   OpencodeAgent,
   OpencodePermissionsState,
   ProjectSortOrder,
+  QwenPermissionMode,
   SettingsMainTab,
 } from '../types/types';
 
@@ -52,6 +53,10 @@ type CodexSettingsStorage = {
 type OpencodeSettingsStorage = {
   agent?: OpencodeAgent;
   autoApprove?: boolean;
+};
+
+type QwenSettingsStorage = {
+  permissionMode?: QwenPermissionMode;
 };
 
 const toOpencodeAgent = (value: unknown): OpencodeAgent => (value === 'plan' ? 'plan' : 'build');
@@ -93,6 +98,14 @@ const parseJson = <T>(value: string | null, fallback: T): T => {
 
 const toCodexPermissionMode = (value: unknown): CodexPermissionMode => {
   if (value === 'acceptEdits' || value === 'bypassPermissions') {
+    return value;
+  }
+
+  return 'default';
+};
+
+const toQwenPermissionMode = (value: unknown): QwenPermissionMode => {
+  if (value === 'plan' || value === 'auto-edit' || value === 'bypassPermissions') {
     return value;
   }
 
@@ -177,6 +190,7 @@ export function useSettingsController({ isOpen, initialTab }: UseSettingsControl
   const [opencodePermissions, setOpencodePermissions] = useState<OpencodePermissionsState>(() => (
     createDefaultOpencodePermissions()
   ));
+  const [qwenPermissionMode, setQwenPermissionMode] = useState<QwenPermissionMode>('default');
 
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [loginProvider, setLoginProvider] = useState<ActiveLoginProvider>('');
@@ -230,6 +244,12 @@ export function useSettingsController({ isOpen, initialTab }: UseSettingsControl
         autoApprove: Boolean(savedOpencodeSettings.autoApprove),
       });
 
+      const savedQwenSettings = parseJson<QwenSettingsStorage>(
+        localStorage.getItem('qwen-settings'),
+        {},
+      );
+      setQwenPermissionMode(toQwenPermissionMode(savedQwenSettings.permissionMode));
+
       try {
         const notificationResponse = await authenticatedFetch('/api/settings/notification-preferences');
         if (notificationResponse.ok) {
@@ -253,6 +273,7 @@ export function useSettingsController({ isOpen, initialTab }: UseSettingsControl
       setNotificationPreferences(createDefaultNotificationPreferences());
       setCodexPermissionMode('default');
       setOpencodePermissions(createDefaultOpencodePermissions());
+      setQwenPermissionMode('default');
       setProjectSortOrder('name');
     }
   }, []);
@@ -314,6 +335,11 @@ export function useSettingsController({ isOpen, initialTab }: UseSettingsControl
         lastUpdated: now,
       }));
 
+      localStorage.setItem('qwen-settings', JSON.stringify({
+        permissionMode: qwenPermissionMode,
+        lastUpdated: now,
+      }));
+
       const notificationResponse = await authenticatedFetch('/api/settings/notification-preferences', {
         method: 'PUT',
         body: JSON.stringify(notificationPreferences),
@@ -337,7 +363,10 @@ export function useSettingsController({ isOpen, initialTab }: UseSettingsControl
     cursorPermissions.skipPermissions,
     notificationPreferences,
     geminiPermissionMode,
+    opencodePermissions.agent,
+    opencodePermissions.autoApprove,
     projectSortOrder,
+    qwenPermissionMode,
   ]);
 
   const updateCodeEditorSetting = useCallback(
@@ -446,6 +475,8 @@ export function useSettingsController({ isOpen, initialTab }: UseSettingsControl
     setGeminiPermissionMode,
     opencodePermissions,
     setOpencodePermissions,
+    qwenPermissionMode,
+    setQwenPermissionMode,
     openLoginForProvider,
     showLoginModal,
     setShowLoginModal,

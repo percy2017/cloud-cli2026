@@ -62,6 +62,7 @@ const PROVIDER_NAMES: Record<SkillsProvider, string> = {
   cursor: 'Cursor',
   gemini: 'Gemini',
   opencode: 'OpenCode',
+  qwen: 'Qwen',
 };
 
 const PROVIDER_SKILL_PATHS: Record<SkillsProvider, string> = {
@@ -70,6 +71,7 @@ const PROVIDER_SKILL_PATHS: Record<SkillsProvider, string> = {
   cursor: '~/.cursor/skills/<skill-name>/SKILL.md',
   gemini: '~/.gemini/skills/<skill-name>/SKILL.md',
   opencode: 'Shared with Claude',
+  qwen: '~/.qwen/skills/<skill-name>/SKILL.md',
 };
 
 const SCOPE_LABELS: Record<SkillsScope, string> = {

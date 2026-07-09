@@ -55,15 +55,14 @@
     "description": "Speech-to-text input and read-aloud, via an OpenAI-compatible audio backend.",
     "enable": "Enable voice",
     "enableDescription": "Show the mic button and the read-aloud button on messages.",
-    "backendTitle": "Backend",
-    "backendDescription": "Point at OpenAI, Groq, or a local server (LocalAI, Speaches, Kokoro-FastAPI). Leave blank to use the server default.",
-    "baseUrl": "Base URL",
-    "apiKey": "API key",
-    "sttModel": "Speech-to-text model",
-    "ttsModel": "Text-to-speech model",
-    "voice": "Voice",
-    "format": "Audio format",
-    "note": "A custom base URL is called directly by your browser and must allow browser CORS requests. Leave it blank to use the server-configured backend."
+    "minimaxTtsTitle": "MiniMax TTS",
+    "minimaxTtsDescription": "Route the read-aloud endpoint through the MiniMax TTS API (mmx speech synthesize). STT is unaffected.",
+    "minimaxTtsEnable": "Use MiniMax for text-to-speech",
+    "minimaxTtsEnableDescription": "When on, the read-aloud button synthesises audio via MiniMax. Requires MiniMax to be enabled in Settings → MiniMax.",
+    "minimaxTtsVoice": "Voice override",
+    "minimaxTtsNote": "Empty means use the voice configured in Settings → MiniMax. Requires an mmx CLI on the server PATH.",
+    "ttsAutoPlayTitle": "Auto-play the last response",
+    "ttsAutoPlayDescription": "When a new assistant message arrives, read it aloud automatically. Tap the 🔊 button on the message to stop it."
   },
   "quickSettings": {
     "title": "Quick Settings",
@@ -355,6 +354,9 @@
       },
       "opencode": {
         "description": "OpenCode CLI assistant"
+      },
+      "qwen": {
+        "description": "Alibaba Qwen Code CLI assistant"
       }
     },
     "connectionStatus": "Connection Status",
@@ -365,6 +367,12 @@
       "reAuthDescription": "Sign in with a different account or refresh credentials",
       "button": "Login",
       "reLoginButton": "Re-login"
+    },
+    "manualSetup": {
+      "title": "Configure Qwen manually",
+      "description": "Qwen 0.19.x has no `qwen auth` command. Set the API key directly in your shell:",
+      "settingsPath": "Or edit the file:",
+      "envHint": "Recognised env vars: OPENAI_API_KEY, ANTHROPIC_API_KEY, QWEN_API_KEY, DASHSCOPE_API_KEY"
     },
     "error": "Error: {{error}}"
   },
@@ -466,6 +474,35 @@
         "path": "~/.config/opencode/agent/<agent-name>.md"
       }
     },
+    "qwen": {
+      "permissionMode": "Permission mode",
+      "description": "Qwen 0.19.x supports four approval modes, passed to the CLI via --approval-mode. The change takes effect on the next message you send.",
+      "modes": {
+        "default": {
+          "title": "Default",
+          "description": "Qwen asks for confirmation before each tool call. Equivalent to not passing --approval-mode."
+        },
+        "plan": {
+          "title": "Plan",
+          "description": "Read-only mode: Qwen analyses the code and proposes a plan, but never executes tools that mutate state."
+        },
+        "autoEdit": {
+          "title": "Auto-edit",
+          "description": "Auto-approves file edits (write/edit), but asks for confirmation on shell commands."
+        },
+        "yolo": {
+          "title": "YOLO",
+          "description": "Auto-approves any tool call without confirmation. Dangerous: only run on trusted projects."
+        }
+      },
+      "technicalDetails": "Technical details",
+      "technicalInfo": {
+        "default": "Qwen runs without --approval-mode. The user approves each tool call interactively.",
+        "plan": "Qwen runs with --approval-mode plan. Useful for exploring without risk of mutating files.",
+        "autoEdit": "Qwen runs with --approval-mode auto-edit. File edits pass without confirmation.",
+        "yolo": "Qwen runs with --approval-mode yolo (or --yolo). All tools execute without permission prompts."
+      }
+    },
     "actions": {
       "add": "Add"
     }
@@ -476,7 +513,8 @@
       "claude": "Model Context Protocol servers provide additional tools and data sources to Claude",
       "cursor": "Model Context Protocol servers provide additional tools and data sources to Cursor",
       "codex": "Model Context Protocol servers provide additional tools and data sources to Codex",
-      "opencode": "Model Context Protocol servers provide additional tools and data sources to OpenCode"
+      "opencode": "Model Context Protocol servers provide additional tools and data sources to OpenCode",
+      "qwen": "Model Context Protocol servers provide additional tools and data sources to Qwen"
     },
     "addButton": "Add MCP Server",
     "empty": "No MCP servers configured",
@@ -731,7 +769,8 @@
         "cursor": "Cursor",
         "codex": "OpenAI Codex",
         "gemini": "Gemini",
-        "opencode": "OpenCode"
+        "opencode": "OpenCode",
+        "qwen": "Qwen Code"
       }
     },
     "steps": {
@@ -751,18 +790,20 @@
   "api": {
     "minimax": {
       "title": "MiniMax",
-      "description": "Token Plan API key used by the web_search and understand_image MCP tools.",
+      "description": "Reads API credentials from the `mmx` CLI installed on the server. The UI shows the current status only — manage the key with `mmx auth login`.",
       "loading": "Loading…",
+      "refresh": "Refresh",
+      "statusAuthenticated": "mmx is authenticated",
+      "statusNotAuthenticated": "mmx is not authenticated",
+      "methodLabel": "Auth method",
+      "methodApiKey": "API key",
+      "methodOAuth": "OAuth",
       "keyLabel": "API key",
-      "keyPlaceholder": "sk-cp-...",
-      "keyHint": "Token Plan key from your MiniMax dashboard.",
       "hostLabel": "API host",
-      "hostPlaceholder": "https://api.minimax.io",
-      "hostHint": "Base URL of the MiniMax API. Defaults to the public Token Plan host.",
-      "showKey": "Show API key",
-      "hideKey": "Hide API key",
-      "saveButton": "Save",
-      "savedToast": "MiniMax credentials saved."
+      "setupTitle": "Set up mmx on the server",
+      "setupDescription": "Run these commands in the server's terminal, then click Refresh.",
+      "installLabel": "Install mmx",
+      "loginLabel": "Log in"
     }
   },
   "minimax": {

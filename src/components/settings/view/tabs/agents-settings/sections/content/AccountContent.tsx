@@ -1,5 +1,6 @@
-import { LogIn } from 'lucide-react';
+import { LogIn, Terminal } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+
 import { Badge, Button } from '../../../../../../../shared/view/ui';
 import SessionProviderLogo from '../../../../../../llm-logo-provider/SessionProviderLogo';
 import type { AgentProvider, AuthStatus } from '../../../../../types/types';
@@ -63,6 +64,15 @@ const agentConfig: Record<AgentProvider, AgentVisualConfig> = {
     subtextClass: 'text-zinc-700 dark:text-zinc-300',
     buttonClass: 'bg-zinc-900 hover:bg-zinc-800 active:bg-zinc-950 dark:bg-zinc-700 dark:hover:bg-zinc-600',
   },
+  qwen: {
+    name: 'Qwen',
+    description: 'Alibaba Qwen Code CLI assistant',
+    bgClass: 'bg-red-50 dark:bg-red-900/20',
+    borderClass: 'border-red-200 dark:border-red-800',
+    textClass: 'text-red-900 dark:text-red-100',
+    subtextClass: 'text-red-700 dark:text-red-300',
+    buttonClass: 'bg-red-600 hover:bg-red-700 active:bg-red-800',
+  },
 };
 
 export default function AccountContent({ agent, authStatus, onLogin }: AccountContentProps) {
@@ -119,7 +129,31 @@ export default function AccountContent({ agent, authStatus, onLogin }: AccountCo
             </div>
           </div>
 
-          {authStatus.method !== 'api_key' && (
+          {authStatus.method !== 'api_key' && agent === 'qwen' && !authStatus.authenticated && (
+            <div className="border-t border-border/50 pt-4">
+              <div className={`font-medium ${config.textClass}`}>
+                {t('agents.manualSetup.title')}
+              </div>
+              <p className={`mt-1 text-sm ${config.subtextClass}`}>
+                {t('agents.manualSetup.description')}
+              </p>
+              <pre className="mt-2 overflow-x-auto rounded bg-zinc-900 px-3 py-2 font-mono text-xs text-zinc-100 dark:bg-zinc-950">
+                <code>export OPENAI_API_KEY=sk-...</code>
+              </pre>
+              <p className={`mt-2 text-sm ${config.subtextClass}`}>
+                {t('agents.manualSetup.settingsPath')}
+              </p>
+              <pre className="mt-2 overflow-x-auto rounded bg-zinc-900 px-3 py-2 font-mono text-xs text-zinc-100 dark:bg-zinc-950">
+                <code>~/.qwen/settings.json</code>
+              </pre>
+              <p className={`mt-2 text-xs ${config.subtextClass} opacity-80`}>
+                <Terminal className="mr-1 inline-block h-3 w-3" />
+                {t('agents.manualSetup.envHint')}
+              </p>
+            </div>
+          )}
+
+          {authStatus.method !== 'api_key' && !(agent === 'qwen' && !authStatus.authenticated) && (
             <div className="border-t border-border/50 pt-4">
               <div className="flex items-center justify-between">
                 <div>
@@ -146,7 +180,13 @@ export default function AccountContent({ agent, authStatus, onLogin }: AccountCo
 
           {authStatus.error && (
             <div className="border-t border-border/50 pt-4">
-              <div className="text-sm text-red-600 dark:text-red-400">
+              <div
+                className={
+                  authStatus.authenticated
+                    ? 'text-sm text-red-600 dark:text-red-400'
+                    : 'text-sm text-muted-foreground'
+                }
+              >
                 {t('agents.error', { error: authStatus.error })}
               </div>
             </div>

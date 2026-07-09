@@ -1,56 +1,27 @@
 import { authenticatedFetch } from '../utils/api';
 import { readVoiceConfig, voiceConfigHeaders } from '../hooks/useVoiceConfig';
 
-function directUrl(baseUrl: string, path: string): string {
-  return `${baseUrl.replace(/\/$/, '')}${path}`;
-}
-
 export function voiceConfigSignature(): string {
   return JSON.stringify(readVoiceConfig());
 }
 
-export function transcribeVoice(blob: Blob, filename: string): Promise<Response> {
-  const config = readVoiceConfig();
-  const body = new FormData();
-
-  if (config.baseUrl.trim()) {
-    body.append('file', blob, filename);
-    body.append('model', config.sttModel || 'whisper-1');
-    return fetch(directUrl(config.baseUrl.trim(), '/audio/transcriptions'), {
-      method: 'POST',
-      headers: config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {},
-      body,
-    });
-  }
-
-  body.append('audio', blob, filename);
-  return authenticatedFetch('/api/voice/transcribe', {
-    method: 'POST',
-    headers: voiceConfigHeaders(),
-    body,
-  });
+// Push-to-talk dictation. Currently disabled at the server — MiniMax does not
+// document a transcription endpoint, so there is no STT backend wired. We keep
+// the function shape so the composer can render the mic button once a backend
+// lands, but it always resolves with a 503-shaped error today.
+export function transcribeVoice(_blob: Blob, _filename: string): Promise<Response> {
+  return Promise.resolve(
+    new Response(
+      JSON.stringify({ error: 'STT not configured. MiniMax TTS only — dictation is disabled.' }),
+      { status: 503, headers: { 'Content-Type': 'application/json' } },
+    ),
+  );
 }
 
+// Read-aloud. Always goes through /api/voice/tts; the server routes to MiniMax
+// only when the user has `ttsUseMinimax` toggled on. Without that toggle the
+// proxy returns 503 because there is no other voice backend.
 export function synthesizeVoice(text: string, signal: AbortSignal): Promise<Response> {
-  const config = readVoiceConfig();
-
-  if (config.baseUrl.trim()) {
-    return fetch(directUrl(config.baseUrl.trim(), '/audio/speech'), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
-      },
-      body: JSON.stringify({
-        model: config.ttsModel || 'tts-1',
-        voice: config.ttsVoice || 'alloy',
-        input: text,
-        ...(config.ttsFormat.trim() ? { response_format: config.ttsFormat.trim() } : {}),
-      }),
-      signal,
-    });
-  }
-
   return authenticatedFetch('/api/voice/tts', {
     method: 'POST',
     body: JSON.stringify({ text }),

@@ -478,17 +478,16 @@ export function useChatSessionState({
       // A freshly created session can be mid-run before the router has a
       // canonical selectedSession (the URL effect synthesizes one on the
       // next render). Keep the active view intact instead of wiping it.
-      if (currentSessionId && processingSessionsRef.current?.has(currentSessionId)) {
-        return;
-      }
-
-      resetStreamingState();
-      setCurrentSessionId(null);
-      messagesOffsetRef.current = 0;
-      setHasMoreMessages(false);
-      setTotalMessages(0);
-      setTokenBudget(null);
-      lastLoadedSessionKeyRef.current = null;
+      //
+      // We also keep `currentSessionId` across mid-conversation transitions
+      // where `selectedSession` momentarily goes null (e.g. after the first
+      // message completes and before the sidebar emits the matching
+      // `session_upserted`). Resetting here would cause the next send to
+      // fall through to `POST /api/providers/sessions` in
+      // `useChatComposerState`, allocating a phantom session row in the DB
+      // that shows up as "Nueva sesión" in the sidebar. The id was
+      // allocated by `handleSessionEstablished` and is only cleared by an
+      // explicit `newSessionTrigger`, so we just bail out.
       return;
     }
 
