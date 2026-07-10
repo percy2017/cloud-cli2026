@@ -1,3 +1,4 @@
+import { providerVisibilityService } from '@/modules/providers/services/provider-visibility.service.js';
 import type { LLMProvider } from '@/shared/types.js';
 
 /**
@@ -95,6 +96,9 @@ export const providerCapabilitiesService = {
   },
 
   listAllProviderCapabilities(): ProviderCapabilities[] {
-    return Object.values(PROVIDER_CAPABILITIES);
+    const enabledIds = new Set(providerVisibilityService.listEnabledIds());
+    return Object.values(PROVIDER_CAPABILITIES).filter(
+      (capability) => enabledIds.has(capability.provider),
+    );
   },
 };

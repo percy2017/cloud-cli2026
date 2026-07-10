@@ -13,6 +13,7 @@ import mime from 'mime-types';
 import Database from 'better-sqlite3';
 
 import { AppError, WORKSPACES_ROOT, getOpenCodeDatabasePath, validateWorkspacePath } from '@/shared/utils.js';
+import { resolveContextWindow } from '@/shared/context-window.js';
 import { closeSessionsWatcher, initializeSessionsWatcher } from '@/modules/providers/index.js';
 import { createWebSocketServer } from '@/modules/websocket/index.js';
 import { treeCache } from '@/modules/files/tree-cache.js';
@@ -67,6 +68,7 @@ import userRoutes from './routes/user.js';
 import geminiRoutes from './routes/gemini.js';
 import pluginsRoutes from './routes/plugins.js';
 import providerRoutes from './modules/providers/provider.routes.js';
+import { providerVisibilityService } from './modules/providers/services/provider-visibility.service.js';
 import voiceRoutes from './voice-proxy.js';
 import browserUseRoutes from './modules/browser-use/browser-use.routes.js';
 import browserUseMcpRoutes from './modules/browser-use/browser-use-mcp.routes.js';
@@ -119,22 +121,29 @@ const wss = createWebSocketServer(server, {
         authenticateWebSocket,
     },
     chat: {
-        spawnFns: {
-            claude: queryClaudeSDK,
-            cursor: spawnCursor,
-            codex: queryCodex,
-            gemini: spawnGemini,
-            opencode: spawnOpenCode,
-            qwen: spawnQwen,
-        },
-        abortFns: {
-            claude: abortClaudeSDKSession,
-            cursor: abortCursorSession,
-            codex: abortCodexSession,
-            gemini: abortGeminiSession,
-            opencode: abortOpenCodeSession,
-            qwen: abortQwenSession,
-        },
+        // Spawn/abort maps are filtered by PROVIDER_ENABLED_ORDER so a disabled
+        // provider has no entry and the websocket service rejects the run with
+        // a clean UNSUPPORTED_PROVIDER error before any subprocess starts.
+        spawnFns: Object.fromEntries(
+            Object.entries({
+                claude: queryClaudeSDK,
+                cursor: spawnCursor,
+                codex: queryCodex,
+                gemini: spawnGemini,
+                opencode: spawnOpenCode,
+                qwen: spawnQwen,
+            }).filter(([providerId]) => providerVisibilityService.isEnabled(providerId)),
+        ),
+        abortFns: Object.fromEntries(
+            Object.entries({
+                claude: abortClaudeSDKSession,
+                cursor: abortCursorSession,
+                codex: abortCodexSession,
+                gemini: abortGeminiSession,
+                opencode: abortOpenCodeSession,
+                qwen: abortQwenSession,
+            }).filter(([providerId]) => providerVisibilityService.isEnabled(providerId)),
+        ),
         resolveToolApproval,
         getPendingApprovalsForSession,
     },
@@ -1466,6 +1475,21 @@ app.get('/api/projects/:projectId/sessions/:sessionId/token-usage', authenticate
         const provider = sessionRow.provider || 'claude';
         const providerNativeSessionId = sessionRow?.provider_session_id || safeSessionId;
 
+        // The provider may have been disabled by PROVIDER_ENABLED_ORDER after the
+        // session was created. Without this guard the chain below falls through
+        // to the Claude branch and reports the session's tokens as Claude usage.
+        if (!providerVisibilityService.isEnabled(provider)) {
+            return res.json({
+                used: 0,
+                total: 0,
+                inputTokens: 0,
+                outputTokens: 0,
+                breakdown: { input: 0, output: 0 },
+                unsupported: true,
+                message: `Provider "${provider}" is currently disabled by PROVIDER_ENABLED_ORDER.`
+            });
+        }
+
         // Handle Cursor sessions - they use SQLite and don't have token usage info
         if (provider === 'cursor') {
             return res.json({
@@ -1731,8 +1755,7 @@ app.get('/api/projects/:projectId/sessions/:sessionId/token-usage', authenticate
         }
         const lines = fileContent.trim().split('\n');
 
-        const parsedContextWindow = parseInt(process.env.CONTEXT_WINDOW, 10);
-        const contextWindow = Number.isFinite(parsedContextWindow) ? parsedContextWindow : 160000;
+        const contextWindow = resolveContextWindow();
         let inputTokens = 0;
         let outputTokens = 0;
         let cacheReadTokens = 0;

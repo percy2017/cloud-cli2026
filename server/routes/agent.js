@@ -13,6 +13,7 @@ import { spawnOpenCode } from '../opencode-cli.js';
 import { spawnQwen } from '../qwen-cli.js';
 import { Octokit } from '@octokit/rest';
 import { providerModelsService } from '../modules/providers/services/provider-models.service.js';
+import { providerVisibilityService } from '../modules/providers/services/provider-visibility.service.js';
 import { IS_PLATFORM } from '../constants/config.js';
 import { normalizeProjectPath } from '../shared/utils.js';
 
@@ -845,6 +846,7 @@ class ResponseCollector {
  */
 router.post('/', validateExternalApiKey, async (req, res) => {
   const { githubUrl, projectPath, message, provider = 'claude', model, githubToken, branchName, sessionId } = req.body;
+  const enabledProviderIds = providerVisibilityService.listEnabledIds();
 
   // Parse stream and cleanup as booleans (handle string "true"/"false" from curl)
   const stream = req.body.stream === undefined ? true : (req.body.stream === true || req.body.stream === 'true');
@@ -863,8 +865,10 @@ router.post('/', validateExternalApiKey, async (req, res) => {
     return res.status(400).json({ error: 'message is required' });
   }
 
-  if (!['claude', 'cursor', 'codex', 'gemini', 'opencode', 'qwen'].includes(provider)) {
-    return res.status(400).json({ error: 'provider must be "claude", "cursor", "codex", "gemini", "opencode", or "qwen"' });
+  if (!enabledProviderIds.includes(provider)) {
+    return res.status(400).json({
+      error: `provider must be one of: ${enabledProviderIds.join(', ')} (per PROVIDER_ENABLED_ORDER)`,
+    });
   }
 
   // Validate GitHub branch/PR creation requirements
@@ -942,10 +946,13 @@ router.post('/', validateExternalApiKey, async (req, res) => {
       });
     }
 
-    const codexModels = (await providerModelsService.getProviderModels('codex')).models;
-    const geminiModels = (await providerModelsService.getProviderModels('gemini')).models;
-    const opencodeModels = (await providerModelsService.getProviderModels('opencode')).models;
-    const qwenModels = (await providerModelsService.getProviderModels('qwen')).models;
+    // Resolve the model catalog only for the provider actually going to run.
+    // Previously this unconditionally fetched codex/gemini/opencode/qwen on
+    // every request, which paid a cost for hidden providers and offered no
+    // value once PROVIDER_ENABLED_ORDER filters the dispatch.
+    const activeModels = providerModelsService.getProviderModels
+      ? (await providerModelsService.getProviderModels(provider)).models
+      : null;
 
     // Defensive: if the request model is stale (localStorage carries an old
     // value that the current upstream no longer recognises — e.g. `gpt-5.5`
@@ -960,7 +967,7 @@ router.post('/', validateExternalApiKey, async (req, res) => {
       if (def.OPTIONS.some((opt) => opt.value === requested)) return requested;
       return def.DEFAULT;
     };
-    const codexModel = resolveModel(model, codexModels);
+    const codexModel = resolveModel(model, activeModels);
 
     // Start the appropriate session
     if (provider === 'claude') {
@@ -1001,7 +1008,7 @@ router.post('/', validateExternalApiKey, async (req, res) => {
         projectPath: finalProjectPath,
         cwd: finalProjectPath,
         sessionId: sessionId || null,
-        model: model || geminiModels.DEFAULT,
+        model: model || (activeModels && activeModels.DEFAULT),
         skipPermissions: true // CLI mode bypasses permissions
       }, writer);
     } else if (provider === 'opencode') {
@@ -1011,7 +1018,7 @@ router.post('/', validateExternalApiKey, async (req, res) => {
         projectPath: finalProjectPath,
         cwd: finalProjectPath,
         sessionId: sessionId || null,
-        model: model || opencodeModels.DEFAULT
+        model: model || (activeModels && activeModels.DEFAULT)
       }, writer);
     } else if (provider === 'qwen') {
       console.log('Starting Qwen CLI session');
@@ -1020,7 +1027,7 @@ router.post('/', validateExternalApiKey, async (req, res) => {
         projectPath: finalProjectPath,
         cwd: finalProjectPath,
         sessionId: sessionId || null,
-        model: resolveModel(model, qwenModels),
+        model: resolveModel(model, activeModels),
         permissionMode: 'bypassPermissions'
       }, writer);
     }

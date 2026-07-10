@@ -5,6 +5,21 @@
 export const IS_PLATFORM = import.meta.env.VITE_IS_PLATFORM === 'true';
 
 /**
+ * Context window reported in the Token Usage modal.
+ *
+ * Reads `VITE_CONTEXT_WINDOW` from `.env` so the operator controls the value
+ * the UI shows regardless of what the backend process happens to inherit.
+ * Falls back to `200_000` (the real Claude Sonnet/Opus/Haiku window) when
+ * the Vite build did not expose the variable — same default the backend
+ * uses (`server/shared/context-window.ts#DEFAULT_CLAUDE_CONTEXT_WINDOW`).
+ */
+const VITE_CONTEXT_WINDOW_RAW = import.meta.env.VITE_CONTEXT_WINDOW;
+const PARSED_CONTEXT_WINDOW = Number.parseInt(VITE_CONTEXT_WINDOW_RAW ?? '', 10);
+export const CONTEXT_WINDOW = Number.isFinite(PARSED_CONTEXT_WINDOW) && PARSED_CONTEXT_WINDOW > 0
+  ? PARSED_CONTEXT_WINDOW
+  : 200_000;
+
+/**
  * For empty shell instances where no project is provided,
  * we use a default project object to ensure the shell can still function.
  * This prevents errors related to missing project data.

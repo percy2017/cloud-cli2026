@@ -6,6 +6,7 @@ import type { AgentContext, AgentsSettingsTabProps } from './types';
 import AgentCategoryContentSection from './sections/AgentCategoryContentSection';
 import AgentCategoryTabsSection from './sections/AgentCategoryTabsSection';
 import AgentSelectorSection from './sections/AgentSelectorSection';
+import { useEnabledProviders } from '../../../../providers/useEnabledProviders';
 
 export default function AgentsSettingsTab({
   providerAuthStatus,
@@ -35,9 +36,11 @@ export default function AgentsSettingsTab({
     [],
   );
 
+  const { enabled: enabledProviders } = useEnabledProviders();
+
   const visibleAgents = useMemo<AgentProvider[]>(() => {
-    return ['claude', 'cursor', 'codex', 'gemini', 'opencode', 'qwen'];
-  }, []);
+    return enabledProviders;
+  }, [enabledProviders]);
 
   const agentContextById = useMemo<Record<AgentProvider, AgentContext>>(() => ({
     claude: {

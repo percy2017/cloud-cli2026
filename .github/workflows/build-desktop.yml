@@ -1,0 +1,93 @@
+name: Build Desktop Installers
+
+on:
+  push:
+    tags:
+      - 'v*'
+    branches:
+      - main
+      - master
+      - 'release/**'
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+        env:
+          npm_config_engine_strict: true
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Build production bundle
+        run: npm run build
+
+      - name: Build Windows installer (NSIS .exe)
+        run: npx electron-builder --win nsis --x64 --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload .exe artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudcli-windows-x64
+          path: |
+            release/desktop/*.exe
+            release/desktop/*.exe.blockmap
+          if-no-files-found: error
+          retention-days: 30
+
+  build-macos:
+    runs-on: macos-latest
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build production bundle
+        run: npm run build
+
+      - name: Build macOS DMG
+        run: npx electron-builder --mac dmg --x64 --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Descomenta y configura estos secrets para firmar/notarizar:
+          # CSC_LINK: ${{ secrets.MACOS_CERT_P12 }}
+          # CSC_KEY_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          # APPLE_ID: ${{ secrets.APPLE_ID }}
+          # APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudcli-macos-x64
+          path: |
+            release/desktop/*.dmg
+            release/desktop/*.zip
+          if-no-files-found: warn
+          retention-days: 30

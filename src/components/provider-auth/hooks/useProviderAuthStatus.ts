@@ -10,6 +10,7 @@ import type {
   ProviderAuthStatus,
   ProviderAuthStatusMap,
 } from '../types';
+import { useEnabledProviders } from '../../providers/useEnabledProviders';
 
 type ProviderAuthStatusPayload = {
   authenticated?: boolean;
@@ -48,6 +49,7 @@ type UseProviderAuthStatusOptions = {
 export function useProviderAuthStatus(
   { initialLoading = true }: UseProviderAuthStatusOptions = {},
 ) {
+  const { enabled: enabledProviders } = useEnabledProviders();
   const [providerAuthStatus, setProviderAuthStatus] = useState<ProviderAuthStatusMap>(() => (
     createInitialProviderAuthStatusMap(initialLoading)
   ));
@@ -106,9 +108,10 @@ export function useProviderAuthStatus(
     }
   }, [setProviderLoading, setProviderStatus]);
 
-  const refreshProviderAuthStatuses = useCallback(async (providers: LLMProvider[] = CLI_PROVIDERS) => {
-    await Promise.all(providers.map((provider) => checkProviderAuthStatus(provider)));
-  }, [checkProviderAuthStatus]);
+  const refreshProviderAuthStatuses = useCallback(async (providers?: LLMProvider[]) => {
+    const targetProviders = providers ?? (enabledProviders.length > 0 ? enabledProviders : CLI_PROVIDERS);
+    await Promise.all(targetProviders.map((provider) => checkProviderAuthStatus(provider)));
+  }, [checkProviderAuthStatus, enabledProviders]);
 
   return {
     providerAuthStatus,

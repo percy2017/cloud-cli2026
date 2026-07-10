@@ -135,6 +135,7 @@ The single source of truth for env vars is `.env.example` (copy → `.env`). Imp
 - `CONTEXT_WINDOW=1000000` / `VITE_CONTEXT_WINDOW=1000000` — Claude Code context window cap.
 - `DATABASE_PATH` — auth SQLite (`better-sqlite3`).
 - `FORBIDDEN_WORKSPACE_PATHS`, `PROVIDER_ORDER` are wired in `server/constants/`.
+- `PROVIDER_ENABLED_ORDER` — CSV de `LLMProvider` válidos (`claude,codex,opencode,qwen` por default). Orden = orden visible en toda la UI; cualquier id ausente = oculto. Parseado una sola vez al cargar el módulo en `server/modules/providers/config.ts`. Filtrado en backend por `providerVisibilityService.listProviders(...)` (registry, capabilities, capabilities list, WS spawn/abort tables, agent.js dispatch) y en frontend por `useEnabledProviders()` (chat composer, settings tab, onboarding, provider-auth status). Tests: `server/modules/providers/tests/provider-enabled-order-config.test.ts`, `provider-visibility.service.test.ts`. Documentación completa: `docs/providers/visibility.md`.
 
 CLI introspection: `cloudcli status` shows where `.env` should live and the active data locations.
 
@@ -204,11 +205,13 @@ These are confirmed user/project rules that previously recurred; honour them whe
 - **WebSocket aborts must be idempotent.** `chat-websocket.service.ts#handleChatAbort` answers with `protocol_ack { aborted: false, reason: 'no_active_run' }` instead of `protocol_error NO_ACTIVE_RUN` when the session has already finished. The user clicks "stop" on a response that just completed; the UI must not surface that as a fatal error.
 - **`projectsDb.getProjectPathById()` is synchronous** (`better-sqlite3`, returns `string | null`). Other endpoints (`server/index.js` lines 486, 527, 594, 705, 823, 898, 972, 1097) `await` it for symmetry with async DB calls — that's fine, but **never chain `.catch()`** on it. That's not a Promise; doing so throws `TypeError: ... .catch is not a function` and aborts the whole endpoint with a 500.
 - **Multer 1.x does not support async `destination` functions.** Use `destination: string` and pre-create the directory with `fs.mkdir({ recursive: true })` before constructing multer. Async-returning destinations cause files to land in a non-existent path and every upload to 500 with `ENOENT`.
+- **Provider visibility & order is env-driven.** `PROVIDER_ENABLED_ORDER` in `.env` controls both the UI list and the runtime API surface. Add a new provider id to every hardcoded allowlist only after updating both `LLMProvider` unions and the `DEFAULT_PROVIDER_ORDER` consideration. The seam (`providerVisibilityService` + `useEnabledProviders`) is the single source of truth — never list providers in feature code.
 
 ## Where to read more
 
 - `server/modules/providers/README.md` — provider contract & checklist for adding one.
 - `docs/providers/agente.md` — capability/UI matrix per provider.
+- `docs/providers/visibility.md` — env-driven provider visibility & order (`PROVIDER_ENABLED_ORDER`).
 - `docs/voice.md` — voice module architecture (orthogonal to providers).
 - `docs/mcp/minimax.md` — MiniMax MCP module reference.
 - `CHANGELOG.md` — release history (release-it keeps this updated).

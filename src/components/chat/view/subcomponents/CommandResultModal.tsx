@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Activity,
   BadgeCheck,
@@ -17,6 +18,7 @@ import {
 } from 'lucide-react';
 
 import { Badge, Button, Dialog, DialogContent, DialogTitle, Input } from '../../../../shared/view/ui';
+import { CONTEXT_WINDOW } from '../../../../constants/config';
 import type { LLMProvider, ProviderModelsCacheInfo, ProviderModelsDefinition } from '../../../../types/app';
 import type {
   CommandModalPayload,
@@ -57,29 +59,26 @@ type ModelOption = {
   description?: string;
 };
 
-const PROVIDER_LABELS: Record<string, string> = {
-  claude: 'Claude',
-  cursor: 'Cursor',
-  codex: 'Codex',
-  gemini: 'Gemini',
-  opencode: 'OpenCode',
-};
-
-const FALLBACK_COMMANDS: CommandEntry[] = [
-  { name: '/models', description: 'Browse available models for the active provider.' },
-  { name: '/cost', description: 'Review token usage for the active session.' },
-  { name: '/status', description: 'Inspect runtime, version, provider, and environment status.' },
-  { name: '/memory', description: 'Open the project CLAUDE.md memory file.' },
-  { name: '/config', description: 'Open settings and configuration.' },
-  { name: '/help', description: 'Show command documentation and syntax.' },
+// Built-in command catalogue — descriptions come from the server, but when
+// the server returns an empty payload we surface a localized fallback list.
+const FALLBACK_COMMANDS = (t: (key: string) => string): CommandEntry[] => [
+  { name: '/models', description: t('commandModal.fallbackCommands.models') },
+  { name: '/cost', description: t('commandModal.fallbackCommands.cost') },
+  { name: '/status', description: t('commandModal.fallbackCommands.status') },
+  { name: '/memory', description: t('commandModal.fallbackCommands.memory') },
+  { name: '/config', description: t('commandModal.fallbackCommands.config') },
+  { name: '/help', description: t('commandModal.fallbackCommands.help') },
 ];
 
-const getProviderLabel = (provider: string | undefined, fallback = 'Unknown') => {
+const getProviderLabel = (
+  provider: string | undefined,
+  t: (key: string, opts?: Record<string, unknown>) => string,
+): string => {
   if (!provider) {
-    return fallback;
+    return t('commandModal.common.providerUnknown');
   }
-
-  return PROVIDER_LABELS[provider] || provider;
+  const translated = t(`commandModal.providers.${provider}`, { defaultValue: '' });
+  return translated || provider;
 };
 
 const formatNumber = (value: number) => {
@@ -147,10 +146,11 @@ function SearchField({
 }
 
 function HelpContent({ data }: { data: HelpCommandData }) {
+  const { t } = useTranslation('chat');
   const [query, setQuery] = useState('');
   const commands = (Array.isArray(data.commands) && data.commands.length > 0
     ? data.commands
-    : FALLBACK_COMMANDS) as CommandEntry[];
+    : FALLBACK_COMMANDS(t)) as CommandEntry[];
 
   const filteredCommands = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -164,10 +164,17 @@ function HelpContent({ data }: { data: HelpCommandData }) {
     });
   }, [commands, query]);
 
+  const noDescription = t('commandModal.common.noDescription');
+  const builtin = t('commandModal.common.builtin');
+
   return (
     <div className="grid h-full min-h-0 gap-4 lg:grid-cols-[minmax(0,1fr)_18rem]">
       <div className="flex min-h-0 flex-col gap-3">
-        <SearchField value={query} onChange={setQuery} placeholder="Filter commands..." />
+        <SearchField
+          value={query}
+          onChange={setQuery}
+          placeholder={t('commandModal.help.searchPlaceholder')}
+        />
 
         <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto pr-1">
           <div className="grid gap-2 sm:grid-cols-2">
@@ -182,11 +189,11 @@ function HelpContent({ data }: { data: HelpCommandData }) {
                     {command.name}
                   </code>
                   <Badge variant="secondary" className="shrink-0 text-[10px] capitalize">
-                    {command.namespace || 'builtin'}
+                    {command.namespace || builtin}
                   </Badge>
                 </div>
                 <p className="mt-3 text-sm leading-5 text-muted-foreground">
-                  {command.description || 'No description available.'}
+                  {command.description || noDescription}
                 </p>
               </div>
             ))}
@@ -194,7 +201,7 @@ function HelpContent({ data }: { data: HelpCommandData }) {
 
           {filteredCommands.length === 0 && (
             <div className="rounded-2xl border border-dashed border-border bg-muted/20 px-4 py-10 text-center text-sm text-muted-foreground">
-              No commands match that filter.
+              {t('commandModal.help.noMatch')}
             </div>
           )}
         </div>
@@ -204,23 +211,23 @@ function HelpContent({ data }: { data: HelpCommandData }) {
         <div className="rounded-2xl border border-border/70 bg-muted/20 p-4">
           <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
             <TerminalSquare className="h-4 w-4 text-primary" />
-            Syntax
+            {t('commandModal.help.syntaxHeading')}
           </div>
           <div className="space-y-2 text-sm text-muted-foreground">
-            <p><code className="text-foreground">/command arg1 arg2</code></p>
-            <p><code className="text-foreground">$ARGUMENTS</code> passes all args.</p>
-            <p><code className="text-foreground">$1</code>, <code className="text-foreground">$2</code> pass positional args.</p>
-            <p><code className="text-foreground">@file</code> includes file contents.</p>
+            <p><code className="text-foreground">{t('commandModal.help.syntaxLineCommand')}</code></p>
+            <p><code className="text-foreground">$ARGUMENTS</code> {t('commandModal.help.syntaxLineArguments').replace(/^\$ARGUMENTS\s*/, '')}</p>
+            <p>{t('commandModal.help.syntaxLinePositional').replace(/^\$1,\s*\$2\s*/, '$1, $2 ')}</p>
+            <p>{t('commandModal.help.syntaxLineFile')}</p>
           </div>
         </div>
 
         <div className="rounded-2xl border border-primary/25 bg-primary/10 p-4">
           <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-foreground">
             <Sparkles className="h-4 w-4 text-primary" />
-            Quick tip
+            {t('commandModal.help.quickTipHeading')}
           </div>
           <p className="text-sm leading-5 text-muted-foreground">
-            Type <code className="text-foreground">/</code> in the composer to open the command palette, then use arrows and Enter to run a command.
+            {t('commandModal.help.quickTipBody')}
           </p>
         </div>
       </aside>
@@ -243,13 +250,13 @@ function ModelsContent({
   currentSessionId: string | null;
   onSelectProviderModel: CommandResultModalProps['onSelectProviderModel'];
 }) {
+  const { t } = useTranslation('chat');
   const [query, setQuery] = useState('');
   const [changingModel, setChangingModel] = useState<string | null>(null);
   const [pendingSessionModel, setPendingSessionModel] = useState<string | null>(null);
   const [selectionNotice, setSelectionNotice] = useState<string | null>(null);
   const currentProvider = (data?.current?.provider || 'claude') as LLMProvider;
-  const currentModel = data?.current?.model || 'Unknown';
-  const providerLabel = data?.current?.providerLabel || getProviderLabel(currentProvider);
+  const providerLabel = getProviderLabel(currentProvider, t);
   const liveDefinition = providerModelCatalog[currentProvider];
   const availableOptions = useMemo<ModelOption[]>(() => {
     if (liveDefinition?.OPTIONS && liveDefinition.OPTIONS.length > 0) {
@@ -285,14 +292,16 @@ function ModelsContent({
       const result = await onSelectProviderModel(currentProvider, model, currentSessionId);
       if (result.scope === 'session') {
         setPendingSessionModel(result.model);
-        setSelectionNotice(`Next response will resume with ${result.model}.`);
+        setSelectionNotice(t('commandModal.models.noticeSession', { model: result.model }));
         return;
       }
 
       setPendingSessionModel(null);
-      setSelectionNotice(`Default ${providerLabel} model set to ${result.model}.`);
+      setSelectionNotice(
+        t('commandModal.models.noticeDefault', { provider: providerLabel, model: result.model }),
+      );
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to change the model right now.';
+      const message = error instanceof Error ? error.message : t('commandModal.models.noticeError');
       setSelectionNotice(message);
     } finally {
       setChangingModel(null);
@@ -305,13 +314,15 @@ function ModelsContent({
       <div className="flex items-center justify-between gap-3 rounded-2xl border border-border/70 bg-muted/20 px-3.5 py-2.5">
         <div className="min-w-0">
           <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-            Active model · {providerLabel}
+            {t('commandModal.models.activeModel', { provider: providerLabel })}
           </p>
           <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5">
-            <span className="break-all font-mono text-sm font-semibold text-foreground">{currentModel}</span>
-            {pendingSessionModel && pendingSessionModel !== currentModel && (
+            <span className="break-all font-mono text-sm font-semibold text-foreground">
+              {data?.current?.model || t('commandModal.common.providerUnknown')}
+            </span>
+            {pendingSessionModel && pendingSessionModel !== data?.current?.model && (
               <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-500 dark:text-emerald-400">
-                → {pendingSessionModel} next
+                → {pendingSessionModel} {t('commandModal.models.appliesNextResponse').toLowerCase()}
               </span>
             )}
           </p>
@@ -322,8 +333,8 @@ function ModelsContent({
           size="icon"
           onClick={onHardRefreshProviderModels}
           disabled={providerModelsRefreshing}
-          title="Refresh model list from providers"
-          aria-label="Refresh model list from providers"
+          title={t('commandModal.models.refreshTitle')}
+          aria-label={t('commandModal.models.refreshAriaLabel')}
           className="h-9 w-9 shrink-0 rounded-xl text-muted-foreground hover:text-foreground"
         >
           <RefreshCw className={`h-4 w-4 ${providerModelsRefreshing ? 'animate-spin' : ''}`} />
@@ -331,14 +342,18 @@ function ModelsContent({
       </div>
 
       {showSearch && (
-        <SearchField value={query} onChange={setQuery} placeholder={`Search ${providerLabel} models...`} />
+        <SearchField
+          value={query}
+          onChange={setQuery}
+          placeholder={t('commandModal.models.searchPlaceholder', { provider: providerLabel })}
+        />
       )}
 
       {filteredOptions.length > 0 ? (
         <div className="scrollbar-thin -mr-1 min-h-0 flex-1 overflow-y-auto pr-1">
           <div className="grid gap-2 md:grid-cols-2">
             {filteredOptions.map((option, index) => {
-              const isCurrent = option.value === currentModel;
+              const isCurrent = option.value === data?.current?.model;
               const isPendingSelection = option.value === pendingSessionModel;
               const isChanging = option.value === changingModel;
               return (
@@ -347,7 +362,7 @@ function ModelsContent({
                   type="button"
                   onClick={() => handleSelectModel(option.value)}
                   disabled={Boolean(changingModel)}
-                  aria-label={`Select model ${option.value}`}
+                  aria-label={t('commandModal.models.selectModelAria', { model: option.value })}
                   className={`settings-content-enter group flex min-h-[4rem] flex-col rounded-2xl border p-3 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-60 ${
                     isCurrent
                       ? 'border-primary/45 bg-primary/10'
@@ -372,11 +387,13 @@ function ModelsContent({
                     <span className="mt-1 text-xs leading-5 text-muted-foreground">{option.description}</span>
                   )}
                   {isCurrent && (
-                    <span className="mt-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-primary">Current selection</span>
+                    <span className="mt-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-primary">
+                      {t('commandModal.models.currentSelection')}
+                    </span>
                   )}
                   {isPendingSelection && !isCurrent && (
                     <span className="mt-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-500 dark:text-emerald-400">
-                      Applies next response
+                      {t('commandModal.models.appliesNextResponse')}
                     </span>
                   )}
                 </button>
@@ -386,7 +403,7 @@ function ModelsContent({
         </div>
       ) : (
         <div className="rounded-2xl border border-dashed border-border bg-background/60 px-4 py-10 text-center text-sm text-muted-foreground">
-          No models match that search.
+          {t('commandModal.models.noMatch')}
         </div>
       )}
 
@@ -395,9 +412,9 @@ function ModelsContent({
         {selectionNotice ? (
           <span className="text-foreground">{selectionNotice}</span>
         ) : hasConcreteSessionId ? (
-          'Your choice applies to this session on the next response.'
+          t('commandModal.models.hasConcreteSession')
         ) : (
-          'Your choice becomes the default model for new turns.'
+          t('commandModal.models.noConcreteSession')
         )}
       </p>
     </div>
@@ -405,37 +422,43 @@ function ModelsContent({
 }
 
 function CostContent({ data }: { data: CostCommandData }) {
+  const { t } = useTranslation('chat');
   const used = Number(data.tokenUsage?.used ?? 0);
-  const total = Number(data.tokenUsage?.total ?? 0);
-  const model = data.model || 'Unknown';
-  const provider = getProviderLabel(data.provider, data.provider || 'Unknown');
+  const reportedTotal = Number(data.tokenUsage?.total ?? 0);
+  // Backend may not populate `total` (gemini/opencode omit it; cursor/qwen
+  // report 0 + unsupported). Fall back to the operator-configured
+  // VITE_CONTEXT_WINDOW so the row always shows a real, .env-sourced number.
+  const total = reportedTotal > 0 ? reportedTotal : CONTEXT_WINDOW;
+  const model = data.model || t('commandModal.common.providerUnknown');
+  const provider = getProviderLabel(data.provider, t);
   const hasBreakdown =
     typeof data.tokenBreakdown?.input === 'number' ||
     typeof data.tokenBreakdown?.output === 'number';
+  const breakdownUnavailable = t('commandModal.cost.breakdownUnavailable');
   const usageRows = [
-    { label: 'Total tokens used', value: formatNumber(used), icon: Activity },
+    { label: t('commandModal.cost.totalUsed'), value: formatNumber(used), icon: Activity },
     ...(hasBreakdown
       ? [
           {
-            label: 'Input tokens',
+            label: t('commandModal.cost.inputTokens'),
             value: formatNumber(Number(data.tokenBreakdown?.input ?? 0)),
             icon: TerminalSquare,
           },
           {
-            label: 'Output tokens',
+            label: t('commandModal.cost.outputTokens'),
             value: formatNumber(Number(data.tokenBreakdown?.output ?? 0)),
             icon: Coins,
           },
         ]
       : [
           {
-            label: 'Breakdown',
-            value: 'Unavailable',
+            label: t('commandModal.cost.breakdown'),
+            value: breakdownUnavailable,
             icon: TerminalSquare,
           },
         ]),
     ...(total > 0
-      ? [{ label: 'Context window', value: formatNumber(total), icon: Gauge }]
+      ? [{ label: t('commandModal.cost.contextWindow'), value: formatNumber(total), icon: Gauge }]
       : []),
   ];
 
@@ -465,11 +488,15 @@ function CostContent({ data }: { data: CostCommandData }) {
       <div className="rounded-2xl border border-border/70 bg-muted/20 p-4">
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Provider</p>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+              {t('commandModal.cost.provider')}
+            </p>
             <p className="mt-1 text-sm font-semibold text-foreground">{provider}</p>
           </div>
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Model</p>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+              {t('commandModal.cost.model')}
+            </p>
             <p className="mt-1 break-all font-mono text-sm text-foreground">{model}</p>
           </div>
         </div>
@@ -479,16 +506,23 @@ function CostContent({ data }: { data: CostCommandData }) {
 }
 
 function StatusContent({ data }: { data: StatusCommandData }) {
+  const { t } = useTranslation('chat');
   const memoryRssMb = data.memoryUsage?.rssMb;
   const rows = [
-    { label: 'Package', value: data.packageName || 'claude-code-ui', icon: Package },
-    { label: 'Version', value: data.version || 'Unknown', icon: BadgeCheck, tone: 'success' as const },
-    { label: 'Uptime', value: data.uptime || 'Unknown', icon: Timer },
-    { label: 'Provider', value: getProviderLabel(data.provider, data.provider || 'Unknown'), icon: Server, tone: 'primary' as const },
-    { label: 'Model', value: data.model || 'Unknown', icon: Cpu },
-    { label: 'Node.js', value: data.nodeVersion || 'Unknown', icon: TerminalSquare },
-    { label: 'Platform', value: data.platform || 'Unknown', icon: Activity },
-    { label: 'Memory', value: typeof memoryRssMb === 'number' ? `${memoryRssMb} MB RSS` : 'Unknown', icon: Gauge },
+    { label: t('commandModal.status.package'), value: data.packageName || 'claude-code-ui', icon: Package },
+    { label: t('commandModal.status.version'), value: data.version || t('commandModal.common.providerUnknown'), icon: BadgeCheck, tone: 'success' as const },
+    { label: t('commandModal.status.uptime'), value: data.uptime || t('commandModal.common.providerUnknown'), icon: Timer },
+    { label: t('commandModal.status.provider'), value: getProviderLabel(data.provider, t), icon: Server, tone: 'primary' as const },
+    { label: t('commandModal.status.model'), value: data.model || t('commandModal.common.providerUnknown'), icon: Cpu },
+    { label: t('commandModal.status.node'), value: data.nodeVersion || t('commandModal.common.providerUnknown'), icon: TerminalSquare },
+    { label: t('commandModal.status.platform'), value: data.platform || t('commandModal.common.providerUnknown'), icon: Activity },
+    {
+      label: t('commandModal.status.memory'),
+      value: typeof memoryRssMb === 'number'
+        ? t('commandModal.status.memoryValue', { mb: memoryRssMb })
+        : t('commandModal.status.memoryUnknown'),
+      icon: Gauge,
+    },
   ];
 
   return (
@@ -500,11 +534,17 @@ function StatusContent({ data }: { data: StatusCommandData }) {
             <span className="relative inline-flex h-3 w-3 rounded-full bg-emerald-500" />
           </span>
           <div>
-            <p className="text-sm font-semibold text-foreground">Runtime online</p>
-            <p className="text-xs text-muted-foreground">Process {data.pid ? `#${data.pid}` : 'status'} is responding.</p>
+            <p className="text-sm font-semibold text-foreground">{t('commandModal.status.onlineHeading')}</p>
+            <p className="text-xs text-muted-foreground">
+              {data.pid
+                ? t('commandModal.status.onlineBody', { pid: `#${data.pid}` })
+                : t('commandModal.status.onlineBodyNoPid')}
+            </p>
           </div>
         </div>
-        <Badge className="rounded-full bg-emerald-500 text-white hover:bg-emerald-500">Healthy</Badge>
+        <Badge className="rounded-full bg-emerald-500 text-white hover:bg-emerald-500">
+          {t('commandModal.status.healthy')}
+        </Badge>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -525,33 +565,34 @@ export default function CommandResultModal({
   currentSessionId,
   onSelectProviderModel,
 }: CommandResultModalProps) {
+  const { t } = useTranslation('chat');
   const isOpen = Boolean(payload);
   const kind = payload?.kind;
   const isModelsModal = kind === 'models';
 
   const modalMeta = {
     help: {
-      eyebrow: 'Command center',
-      title: 'Help & Shortcuts',
-      subtitle: 'Search built-ins, syntax patterns, and command usage without leaving the chat.',
+      eyebrow: t('commandModal.help.eyebrow'),
+      title: t('commandModal.help.title'),
+      subtitle: t('commandModal.help.subtitle'),
       icon: CircleHelp,
     },
     models: {
-      eyebrow: 'Model selection',
-      title: 'Choose a Model',
-      subtitle: 'Pick the model this provider should use.',
+      eyebrow: t('commandModal.models.eyebrow'),
+      title: t('commandModal.models.title'),
+      subtitle: t('commandModal.models.subtitle'),
       icon: Cpu,
     },
     cost: {
-      eyebrow: 'Session telemetry',
-      title: 'Token Usage',
-      subtitle: 'Input, output, and total token counts for this session.',
+      eyebrow: t('commandModal.cost.eyebrow'),
+      title: t('commandModal.cost.title'),
+      subtitle: t('commandModal.cost.subtitle'),
       icon: Coins,
     },
     status: {
-      eyebrow: 'Runtime health',
-      title: 'System Status',
-      subtitle: 'Version, provider, runtime, and environment details in one place.',
+      eyebrow: t('commandModal.status.eyebrow'),
+      title: t('commandModal.status.title'),
+      subtitle: t('commandModal.status.subtitle'),
       icon: Activity,
     },
   } as const;
@@ -562,7 +603,7 @@ export default function CommandResultModal({
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="flex h-[min(92dvh,48rem)] w-[calc(100vw-1rem)] max-w-5xl flex-col overflow-hidden rounded-3xl border-border/80 bg-popover/95 p-0 shadow-2xl backdrop-blur-xl sm:w-[min(94vw,64rem)]">
-        <DialogTitle>{activeMeta?.title || 'Command Result'}</DialogTitle>
+        <DialogTitle>{activeMeta?.title || t('commandModal.common.close')}</DialogTitle>
 
         <div
           className={`flex shrink-0 items-start justify-between gap-3 border-b border-border bg-popover ${
@@ -596,7 +637,7 @@ export default function CommandResultModal({
             size="icon"
             onClick={onClose}
             className="h-8 w-8 shrink-0 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"
-            aria-label="Close command result modal"
+            aria-label={t('commandModal.common.closeAriaLabel')}
           >
             <X className="h-4 w-4" />
           </Button>
@@ -621,10 +662,10 @@ export default function CommandResultModal({
         <div className="flex shrink-0 flex-col gap-3 border-t border-border/70 bg-muted/20 px-4 py-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between sm:px-6">
           <div className="flex items-center gap-2">
             <Gauge className="h-3.5 w-3.5" />
-            <span>Esc closes the modal.</span>
+            <span>{t('commandModal.common.escCloses')}</span>
           </div>
           <Button type="button" variant="outline" size="sm" onClick={onClose} className="rounded-xl">
-            Close
+            {t('commandModal.common.close')}
           </Button>
         </div>
       </DialogContent>

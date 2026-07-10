@@ -220,5 +220,94 @@
   },
   "tasks": {
     "nextTaskPrompt": "다음 작업 시작"
+  },
+  "commandModal": {
+    "common": {
+      "close": "Close",
+      "escCloses": "Esc closes the modal.",
+      "closeAriaLabel": "Close command result modal",
+      "noDescription": "No description available.",
+      "providerUnknown": "Unknown",
+      "builtin": "builtin"
+    },
+    "help": {
+      "eyebrow": "Command center",
+      "title": "Help & Shortcuts",
+      "subtitle": "Search built-ins, syntax patterns, and command usage without leaving the chat.",
+      "searchPlaceholder": "Filter commands...",
+      "syntaxHeading": "Syntax",
+      "syntaxLineCommand": "/command arg1 arg2",
+      "syntaxLineArguments": "$ARGUMENTS passes all args.",
+      "syntaxLinePositional": "$1, $2 pass positional args.",
+      "syntaxLineFile": "@file includes file contents.",
+      "quickTipHeading": "Quick tip",
+      "quickTipBody": "Type / in the composer to open the command palette, then use arrows and Enter to run a command."
+    },
+    "models": {
+      "eyebrow": "Model selection",
+      "title": "Choose a Model",
+      "subtitle": "Pick the model this provider should use.",
+      "searchPlaceholder": "Search {{provider}} models...",
+      "noMatch": "No models match that search.",
+      "activeModel": "Active model · {{provider}}",
+      "refreshTitle": "Refresh model list from providers",
+      "refreshAriaLabel": "Refresh model list from providers",
+      "currentSelection": "Current selection",
+      "appliesNextResponse": "Applies next response",
+      "selectModelAria": "Select model {{model}}",
+      "noConcreteSession": "Your choice becomes the default model for new turns.",
+      "hasConcreteSession": "Your choice applies to this session on the next response.",
+      "noticeSession": "Next response will resume with {{model}}.",
+      "noticeDefault": "Default {{provider}} model set to {{model}}.",
+      "noticeError": "Unable to change the model right now."
+    },
+    "cost": {
+      "eyebrow": "Session telemetry",
+      "title": "Token Usage",
+      "subtitle": "Input, output, and total token counts for this session.",
+      "totalUsed": "Total tokens used",
+      "inputTokens": "Input tokens",
+      "outputTokens": "Output tokens",
+      "breakdown": "Breakdown",
+      "breakdownUnavailable": "Unavailable",
+      "contextWindow": "Context window",
+      "provider": "Provider",
+      "model": "Model"
+    },
+    "status": {
+      "eyebrow": "Runtime health",
+      "title": "System Status",
+      "subtitle": "Version, provider, runtime, and environment details in one place.",
+      "healthy": "Healthy",
+      "onlineHeading": "Runtime online",
+      "onlineBody": "Process {{pid}} is responding.",
+      "onlineBodyNoPid": "Process status is responding.",
+      "package": "Package",
+      "version": "Version",
+      "uptime": "Uptime",
+      "provider": "Provider",
+      "model": "Model",
+      "node": "Node.js",
+      "platform": "Platform",
+      "memory": "Memory",
+      "memoryValue": "{{mb}} MB RSS",
+      "memoryUnknown": "Unknown"
+    },
+    "providers": {
+      "claude": "Claude",
+      "cursor": "Cursor",
+      "codex": "Codex",
+      "gemini": "Gemini",
+      "opencode": "OpenCode",
+      "qwen": "Qwen"
+    },
+    "fallbackCommands": {
+      "models": "Browse available models for the active provider.",
+      "cost": "Review token usage for the active session.",
+      "status": "Inspect runtime, version, provider, and environment status.",
+      "memory": "Open the project CLAUDE.md memory file.",
+      "config": "Open settings and configuration.",
+      "help": "Show command documentation and syntax."
+    }
   }
 }

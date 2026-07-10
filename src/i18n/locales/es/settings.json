@@ -724,18 +724,6 @@
       "description": "Colaboración en equipo, configuraciones MCP compartidas, sincronización de ajustes entre entornos e infraestructura administrada.",
       "learnMore": "Saber más"
     },
-    "proFeatures": {
-      "title": "Funciones de CloudCLI Pro",
-      "availableWith": "Disponible con CloudCLI Pro",
-      "syncSettings": {
-        "title": "Sincronizar ajustes",
-        "description": "Mantén tus preferencias, configuraciones MCP y tema sincronizados en todos tus entornos."
-      },
-      "teamManagement": {
-        "title": "Gestión de equipos",
-        "description": "Múltiples usuarios, acceso por roles y proyectos compartidos para tu equipo."
-      }
-    },
     "licensedUnder": "Licenciado bajo AGPL-3.0"
   },
   "onboarding": {

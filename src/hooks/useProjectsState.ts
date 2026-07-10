@@ -12,6 +12,7 @@ import type {
 } from '../types/app';
 
 import type { SessionActivityMap } from './useSessionProtection';
+import { getStoredProvider } from '../components/providers/useEnabledProviders';
 
 type UseProjectsStateArgs = {
   sessionId?: string;
@@ -60,8 +61,7 @@ const serialize = (value: unknown) => JSON.stringify(value ?? null);
 
 const readSelectedProvider = (): LLMProvider => {
   try {
-    const storedProvider = localStorage.getItem('selected-provider');
-    return storedProvider ? storedProvider as LLMProvider : DEFAULT_PROVIDER;
+    return getStoredProvider(['claude', 'qwen', 'codex', 'opencode', 'cursor', 'gemini']);
   } catch {
     return DEFAULT_PROVIDER;
   }

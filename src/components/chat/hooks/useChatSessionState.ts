@@ -9,6 +9,7 @@ import type { ChatMessage } from '../types/types';
 import { createCachedDiffCalculator, type DiffCalculator } from '../utils/messageTransforms';
 
 import { normalizedToChatMessages } from './useChatMessages';
+import { getStoredProvider, useEnabledProviders } from '../../providers/useEnabledProviders';
 
 const MESSAGES_PER_PAGE = 20;
 const INITIAL_VISIBLE_MESSAGES = 100;
@@ -247,7 +248,7 @@ export function useChatSessionState({
       return;
     }
 
-    const prov = (localStorage.getItem('selected-provider') as LLMProvider) || 'claude';
+    const prov = getStoredProvider(['claude', 'qwen', 'codex', 'opencode', 'cursor', 'gemini']);
     const normalized = chatMessageToNormalized(pendingUserMessage, activeSessionId, prov);
     if (normalized) {
       sessionStore.appendRealtime(activeSessionId, normalized);
@@ -286,7 +287,7 @@ export function useChatSessionState({
       setPendingUserMessage(msg);
       return;
     }
-    const prov = (localStorage.getItem('selected-provider') as LLMProvider) || 'claude';
+    const prov = getStoredProvider(['claude', 'qwen', 'codex', 'opencode', 'cursor', 'gemini']);
     const normalized = chatMessageToNormalized(msg, activeSessionId, prov);
     if (normalized) {
       sessionStore.appendRealtime(activeSessionId, normalized);

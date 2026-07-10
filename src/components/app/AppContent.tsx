@@ -7,8 +7,10 @@ import MainContent from '../main-content/view/MainContent';
 import CommandPalette from '../command-palette/CommandPalette';
 import { useWebSocket } from '../../contexts/WebSocketContext';
 import { PaletteOpsProvider, usePaletteOpsRegister } from '../../contexts/PaletteOpsContext';
+import type { LLMProvider } from '../../types/app';
 import { useDeviceSettings } from '../../hooks/useDeviceSettings';
 import { useSessionProtection } from '../../hooks/useSessionProtection';
+import { setStoredProvider } from '../providers/useEnabledProviders';
 import { useProjectsState } from '../../hooks/useProjectsState';
 import { api } from '../../utils/api';
 
@@ -147,7 +149,7 @@ function AppContentInner() {
       }
 
       if (typeof message.provider === 'string' && message.provider.trim()) {
-        localStorage.setItem('selected-provider', message.provider);
+        setStoredProvider(message.provider as LLMProvider);
       }
 
       setActiveTab('chat');

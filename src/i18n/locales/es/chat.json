@@ -252,5 +252,94 @@
   },
   "tasks": {
     "nextTaskPrompt": "Iniciar la siguiente tarea"
+  },
+  "commandModal": {
+    "common": {
+      "close": "Cerrar",
+      "escCloses": "Esc cierra el modal.",
+      "closeAriaLabel": "Cerrar modal de resultado de comando",
+      "noDescription": "Sin descripción disponible.",
+      "providerUnknown": "Desconocido",
+      "builtin": "integrado"
+    },
+    "help": {
+      "eyebrow": "Centro de comandos",
+      "title": "Ayuda y atajos",
+      "subtitle": "Busca comandos integrados, patrones de sintaxis y uso sin salir del chat.",
+      "searchPlaceholder": "Filtrar comandos...",
+      "syntaxHeading": "Sintaxis",
+      "syntaxLineCommand": "/comando arg1 arg2",
+      "syntaxLineArguments": "$ARGUMENTS pasa todos los argumentos.",
+      "syntaxLinePositional": "$1, $2 pasan argumentos posicionales.",
+      "syntaxLineFile": "@archivo incluye el contenido del archivo.",
+      "quickTipHeading": "Consejo rápido",
+      "quickTipBody": "Escribe / en el compositor para abrir la paleta de comandos y luego usa las flechas y Enter para ejecutar uno."
+    },
+    "models": {
+      "eyebrow": "Selección de modelo",
+      "title": "Elegir un modelo",
+      "subtitle": "Elige el modelo que este proveedor debe usar.",
+      "searchPlaceholder": "Buscar modelos de {{provider}}...",
+      "noMatch": "Ningún modelo coincide con esa búsqueda.",
+      "activeModel": "Modelo activo · {{provider}}",
+      "refreshTitle": "Actualizar la lista de modelos desde los proveedores",
+      "refreshAriaLabel": "Actualizar la lista de modelos desde los proveedores",
+      "currentSelection": "Selección actual",
+      "appliesNextResponse": "Aplica en la próxima respuesta",
+      "selectModelAria": "Seleccionar modelo {{model}}",
+      "noConcreteSession": "Tu elección se convierte en el modelo por defecto para los nuevos turnos.",
+      "hasConcreteSession": "Tu elección se aplica a esta sesión en la próxima respuesta.",
+      "noticeSession": "La próxima respuesta continuará con {{model}}.",
+      "noticeDefault": "Modelo por defecto de {{provider}} cambiado a {{model}}.",
+      "noticeError": "No se puede cambiar el modelo en este momento."
+    },
+    "cost": {
+      "eyebrow": "Telemetría de la sesión",
+      "title": "Uso de tokens",
+      "subtitle": "Conteo de tokens de entrada, salida y total de esta sesión.",
+      "totalUsed": "Tokens totales usados",
+      "inputTokens": "Tokens de entrada",
+      "outputTokens": "Tokens de salida",
+      "breakdown": "Desglose",
+      "breakdownUnavailable": "No disponible",
+      "contextWindow": "Ventana de contexto",
+      "provider": "Proveedor",
+      "model": "Modelo"
+    },
+    "status": {
+      "eyebrow": "Salud del runtime",
+      "title": "Estado del sistema",
+      "subtitle": "Versión, proveedor, runtime y entorno en un solo lugar.",
+      "healthy": "Saludable",
+      "onlineHeading": "Runtime en línea",
+      "onlineBody": "El proceso {{pid}} está respondiendo.",
+      "onlineBodyNoPid": "El estado del proceso está respondiendo.",
+      "package": "Paquete",
+      "version": "Versión",
+      "uptime": "Tiempo activo",
+      "provider": "Proveedor",
+      "model": "Modelo",
+      "node": "Node.js",
+      "platform": "Plataforma",
+      "memory": "Memoria",
+      "memoryValue": "{{mb}} MB RSS",
+      "memoryUnknown": "Desconocido"
+    },
+    "providers": {
+      "claude": "Claude",
+      "cursor": "Cursor",
+      "codex": "Codex",
+      "gemini": "Gemini",
+      "opencode": "OpenCode",
+      "qwen": "Qwen"
+    },
+    "fallbackCommands": {
+      "models": "Explorar modelos disponibles para el proveedor activo.",
+      "cost": "Revisar el uso de tokens de la sesión activa.",
+      "status": "Inspeccionar el estado del runtime, versión, proveedor y entorno.",
+      "memory": "Abrir el archivo de memoria CLAUDE.md del proyecto.",
+      "config": "Abrir ajustes y configuración.",
+      "help": "Mostrar la documentación y sintaxis de los comandos."
+    }
   }
 }

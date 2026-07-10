@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { authenticatedFetch } from '../../../utils/api';
+import { getStoredProvider, setStoredProvider, useEnabledProviders } from '../../providers/useEnabledProviders';
 import type { PendingPermissionRequest, PermissionMode } from '../types/types';
 import type {
   ProjectSession,
@@ -81,11 +82,25 @@ type ChangeActiveModelApiResponse = {
 };
 
 export function useChatProviderState({ selectedSession, selectedProject }: UseChatProviderStateArgs) {
+  const { enabled: enabledProviders, loading: enabledProvidersLoading } = useEnabledProviders();
+
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('default');
   const [pendingPermissionRequests, setPendingPermissionRequests] = useState<PendingPermissionRequest[]>([]);
-  const [provider, setProvider] = useState<LLMProvider>(() => {
-    return (localStorage.getItem('selected-provider') as LLMProvider) || 'claude';
+  const [provider, setProviderState] = useState<LLMProvider>(() => {
+    return getStoredProvider(['claude', 'cursor', 'codex', 'gemini', 'opencode', 'qwen']);
   });
+
+  // Re-sync the active provider whenever the operator-configured enabled
+  // list arrives (or changes after a settings refresh). If the cached
+  // selected-provider id is no longer visible, the helper already rewrote
+  // it to `enabled[0]` and we just adopt that value here.
+  useEffect(() => {
+    if (enabledProvidersLoading) {
+      return;
+    }
+    const resolved = getStoredProvider(enabledProviders);
+    setProviderState(resolved);
+  }, [enabledProviders, enabledProvidersLoading]);
   const [cursorModel, setCursorModel] = useState<string>(() => {
     return localStorage.getItem('cursor-model') || FALLBACK_DEFAULT_MODEL.cursor;
   });
@@ -163,7 +178,7 @@ export function useChatProviderState({ selectedSession, selectedProject }: UseCh
   }, []);
 
   const loadProviderModels = useCallback(async (options: { bypassCache?: boolean } = {}) => {
-    const providers: LLMProvider[] = ['claude', 'cursor', 'codex', 'gemini', 'opencode', 'qwen'];
+    const providers = enabledProviders;
     const requestId = providerModelsRequestIdRef.current + 1;
     providerModelsRequestIdRef.current = requestId;
     const isHardRefresh = options.bypassCache === true;
@@ -220,7 +235,7 @@ export function useChatProviderState({ selectedSession, selectedProject }: UseCh
         setProviderModelsRefreshing(false);
       }
     }
-  }, []);
+  }, [enabledProviders]);
 
   useEffect(() => {
     void loadProviderModels();
@@ -369,9 +384,16 @@ export function useChatProviderState({ selectedSession, selectedProject }: UseCh
       return;
     }
 
-    setProvider(selectedSession.__provider);
-    localStorage.setItem('selected-provider', selectedSession.__provider);
-  }, [provider, selectedSession]);
+    if (!enabledProviders.includes(selectedSession.__provider)) {
+      // The session belongs to a provider the operator has hidden. Stay on
+      // the current provider — the session is still reachable via direct
+      // URL but no provider-switch should happen from it.
+      return;
+    }
+
+    setProviderState(selectedSession.__provider);
+    setStoredProvider(selectedSession.__provider);
+  }, [provider, selectedSession, enabledProviders]);
 
   // Permission prompts belong to a session, not to the transient provider
   // selection that is synchronized after navigation.
@@ -450,6 +472,17 @@ export function useChatProviderState({ selectedSession, selectedProject }: UseCh
       model: body.data.model || model,
     };
   }, [setStoredProviderModel]);
+
+  // Public provider setter used by the chat composer / settings UI.
+  // Persists the choice so a refresh lands on the same provider unless the
+  // operator has hidden it (handled by the effect above).
+  const setProvider = useCallback((next: LLMProvider) => {
+    if (!enabledProviders.includes(next)) {
+      return;
+    }
+    setProviderState(next);
+    setStoredProvider(next);
+  }, [enabledProviders]);
 
   return {
     provider,

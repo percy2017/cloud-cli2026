@@ -2,7 +2,7 @@
   "name": "@cloudcli-ai/cloudcli",
   "version": "1.35.1",
   "productName": "CloudCLI",
-  "description": "A web-based UI for Claude Code CLI",
+  "description": "CloudCLI - Web/desktop UI for Claude Code, Codex, OpenCode, Cursor, Gemini, Qwen",
   "type": "module",
   "main": "dist-server/server/index.js",
   "bin": {
@@ -21,10 +21,10 @@
   "homepage": "https://cloudcli.ai",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/siteboon/claudecodeui.git"
+    "url": "git+https://github.com/cloudcli-ai/cloudcli.git"
   },
   "bugs": {
-    "url": "https://github.com/siteboon/claudecodeui/issues"
+    "url": "https://github.com/cloudcli-ai/cloudcli/issues"
   },
   "scripts": {
     "dev": "concurrently --kill-others \"npm run server:dev\" \"npm run client\"",

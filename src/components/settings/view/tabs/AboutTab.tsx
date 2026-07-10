@@ -1,10 +1,9 @@
-import { Cloud, ExternalLink, MessageSquare, Star, Users } from 'lucide-react';
+import { ExternalLink, MessageSquare, Star } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { CLOUDCLI_WORDMARK_FONT_FAMILY } from '../../../../constants/branding';
 import { IS_PLATFORM } from '../../../../constants/config';
 import { useVersionCheck } from '../../../../hooks/useVersionCheck';
-import PremiumFeatureCard from '../PremiumFeatureCard';
 
 const GITHUB_REPO_URL = 'https://github.com/siteboon/claudecodeui';
 const DISCORD_URL = 'https://discord.gg/buxwujPNRE';
@@ -141,25 +140,6 @@ export default function AboutTab() {
             {t('aboutTab.tryHosted.learnMore')}
             <ExternalLink className="h-3 w-3" />
           </a>
-        </div>
-      )}
-
-      {/* Premium feature placeholders (OSS mode only) */}
-      {!IS_PLATFORM && (
-        <div className="space-y-4 border-t border-border/50 pt-6">
-          <h3 className="text-sm font-medium text-foreground">{t('aboutTab.proFeatures.title')}</h3>
-          <PremiumFeatureCard
-            icon={<Cloud className="h-5 w-5" />}
-            title={t('aboutTab.proFeatures.syncSettings.title')}
-            description={t('aboutTab.proFeatures.syncSettings.description')}
-            ctaText={t('aboutTab.proFeatures.availableWith')}
-          />
-          <PremiumFeatureCard
-            icon={<Users className="h-5 w-5" />}
-            title={t('aboutTab.proFeatures.teamManagement.title')}
-            description={t('aboutTab.proFeatures.teamManagement.description')}
-            ctaText={t('aboutTab.proFeatures.availableWith')}
-          />
         </div>
       )}
 

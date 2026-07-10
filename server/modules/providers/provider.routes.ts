@@ -5,6 +5,7 @@ import { providerCapabilitiesService } from '@/modules/providers/services/provid
 import { providerMcpService } from '@/modules/providers/services/mcp.service.js';
 import { providerModelsService } from '@/modules/providers/services/provider-models.service.js';
 import { providerSkillsService } from '@/modules/providers/services/skills.service.js';
+import { providerVisibilityService } from '@/modules/providers/services/provider-visibility.service.js';
 import { sessionConversationsSearchService } from '@/modules/providers/services/session-conversations-search.service.js';
 import { sessionsService } from '@/modules/providers/services/sessions.service.js';
 import type {
@@ -298,6 +299,21 @@ const parseProvider = (value: unknown): LLMProvider => {
   });
 };
 
+/**
+ * Parses a provider id from any source, then asserts it passes the
+ * `PROVIDER_ENABLED_ORDER` visibility gate.
+ *
+ * Use this chokepoint for every route that takes a single `:provider` path
+ * parameter or accepts a `provider` field in a request body — it produces
+ * a stable `403 PROVIDER_DISABLED` instead of an opaque 404/500 when the
+ * operator has hidden that provider via `.env`.
+ */
+const parseEnabledProvider = (value: unknown): LLMProvider => {
+  const provider = parseProvider(value);
+  providerVisibilityService.assertEnabled(provider);
+  return provider;
+};
+
 const parseSessionRenameSummary = (payload: unknown): string => {
   if (!payload || typeof payload !== 'object') {
     throw new AppError('Request body must be an object.', {
@@ -380,7 +396,7 @@ const parseChangeActiveModelPayload = (payload: unknown): ProviderChangeActiveMo
 router.get(
   '/:provider/auth/status',
   asyncHandler(async (req: Request, res: Response) => {
-    const provider = parseProvider(req.params.provider);
+    const provider = parseEnabledProvider(req.params.provider);
     const status = await providerAuthService.getProviderAuthStatus(provider);
     res.json(createApiSuccessResponse(status));
   }),
@@ -389,7 +405,7 @@ router.get(
 router.get(
   '/:provider/models',
   asyncHandler(async (req: Request, res: Response) => {
-    const provider = parseProvider(req.params.provider);
+    const provider = parseEnabledProvider(req.params.provider);
     const bypassCache = parseOptionalBooleanQuery(req.query.bypassCache, 'bypassCache') ?? false;
     const result = await providerModelsService.getProviderModels(provider, { bypassCache });
     res.json(createApiSuccessResponse({ provider, models: result.models, cache: result.cache }));
@@ -399,7 +415,7 @@ router.get(
 router.post(
   '/:provider/sessions/:sessionId/active-model',
   asyncHandler(async (req: Request, res: Response) => {
-    const provider = parseProvider(req.params.provider);
+    const provider = parseEnabledProvider(req.params.provider);
     const sessionId = parseSessionId(req.params.sessionId);
     const payload = parseChangeActiveModelPayload(req.body);
     const result = await providerModelsService.changeActiveModel(provider, {
@@ -414,7 +430,7 @@ router.post(
 router.get(
   '/:provider/skills',
   asyncHandler(async (req: Request, res: Response) => {
-    const provider = parseProvider(req.params.provider);
+    const provider = parseEnabledProvider(req.params.provider);
     const workspacePath = readOptionalQueryString(req.query.workspacePath);
     const skills = await providerSkillsService.listProviderSkills(provider, { workspacePath });
     res.json(createApiSuccessResponse({ provider, skills }));
@@ -424,7 +440,7 @@ router.get(
 router.post(
   '/:provider/skills',
   asyncHandler(async (req: Request, res: Response) => {
-    const provider = parseProvider(req.params.provider);
+    const provider = parseEnabledProvider(req.params.provider);
     const input = parseProviderSkillCreatePayload(req.body);
     const skills = await providerSkillsService.addProviderSkills(provider, input);
     res.json(createApiSuccessResponse({ provider, skills }));
@@ -434,7 +450,7 @@ router.post(
 router.delete(
   '/:provider/skills/:directoryName',
   asyncHandler(async (req: Request, res: Response) => {
-    const provider = parseProvider(req.params.provider);
+    const provider = parseEnabledProvider(req.params.provider);
     const result = await providerSkillsService.removeProviderSkill(provider, {
       directoryName: readPathParam(req.params.directoryName, 'directoryName'),
     });
@@ -464,7 +480,7 @@ const parseProviderSkillStatePayload = (payload: unknown): { enabled: boolean } 
 router.put(
   '/:provider/skills/state',
   asyncHandler(async (req: Request, res: Response) => {
-    const provider = parseProvider(req.params.provider);
+    const provider = parseEnabledProvider(req.params.provider);
     const workspacePath = readOptionalQueryString(req.query.workspacePath);
     const { enabled } = parseProviderSkillStatePayload(req.body);
     const result = await providerSkillsService.setAllSkillsEnabled(provider, enabled, {
@@ -477,7 +493,7 @@ router.put(
 router.put(
   '/:provider/skills/:skillKey/state',
   asyncHandler(async (req: Request, res: Response) => {
-    const provider = parseProvider(req.params.provider);
+    const provider = parseEnabledProvider(req.params.provider);
     const skillKey = readPathParam(req.params.skillKey, 'skillKey');
     const { enabled } = parseProviderSkillStatePayload(req.body);
     const result = await providerSkillsService.setSkillEnabled(provider, skillKey, enabled);
@@ -488,7 +504,7 @@ router.put(
 router.get(
   '/:provider/skills/disabled',
   asyncHandler(async (req: Request, res: Response) => {
-    const provider = parseProvider(req.params.provider);
+    const provider = parseEnabledProvider(req.params.provider);
     const disabledKeys = await providerSkillsService.listDisabledKeys(provider);
     res.json(createApiSuccessResponse({ provider, disabledKeys }));
   }),
@@ -498,7 +514,7 @@ router.get(
 router.get(
   '/:provider/mcp/servers',
   asyncHandler(async (req: Request, res: Response) => {
-    const provider = parseProvider(req.params.provider);
+    const provider = parseEnabledProvider(req.params.provider);
     const workspacePath = readOptionalQueryString(req.query.workspacePath);
     const scope = parseMcpScope(req.query.scope);
 
@@ -516,7 +532,7 @@ router.get(
 router.post(
   '/:provider/mcp/servers',
   asyncHandler(async (req: Request, res: Response) => {
-    const provider = parseProvider(req.params.provider);
+    const provider = parseEnabledProvider(req.params.provider);
     const payload = parseMcpUpsertPayload(req.body);
     const server = await providerMcpService.upsertProviderMcpServer(provider, payload);
     res.status(201).json(createApiSuccessResponse({ server }));
@@ -526,7 +542,7 @@ router.post(
 router.delete(
   '/:provider/mcp/servers/:name',
   asyncHandler(async (req: Request, res: Response) => {
-    const provider = parseProvider(req.params.provider);
+    const provider = parseEnabledProvider(req.params.provider);
     const scope = parseMcpScope(req.query.scope);
     const workspacePath = readOptionalQueryString(req.query.workspacePath);
     const result = await providerMcpService.removeProviderMcpServer(provider, {
@@ -558,6 +574,14 @@ router.post(
 );
 
 router.get(
+  '/enabled',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const enabled = providerVisibilityService.listEnabledIds();
+    res.json(createApiSuccessResponse({ enabled, order: enabled }));
+  }),
+);
+
+router.get(
   '/capabilities',
   asyncHandler(async (_req: Request, res: Response) => {
     res.json(createApiSuccessResponse({
@@ -569,7 +593,7 @@ router.get(
 router.get(
   '/:provider/capabilities',
   asyncHandler(async (req: Request, res: Response) => {
-    const provider = parseProvider(req.params.provider);
+    const provider = parseEnabledProvider(req.params.provider);
     res.json(createApiSuccessResponse(
       providerCapabilitiesService.getProviderCapabilities(provider),
     ));
@@ -587,7 +611,7 @@ router.post(
   '/sessions',
   asyncHandler(async (req: Request, res: Response) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
-    const provider = parseProvider(body.provider);
+    const provider = parseEnabledProvider(body.provider);
     const projectPath = typeof body.projectPath === 'string' ? body.projectPath : '';
     const result = sessionsService.createAppSession(provider, projectPath);
     res.status(201).json(createApiSuccessResponse(result));

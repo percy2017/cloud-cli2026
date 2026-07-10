@@ -9,6 +9,7 @@ import type {
 } from "../../../../types/app";
 import SessionProviderLogo from "../../../llm-logo-provider/SessionProviderLogo";
 import { NextTaskBanner } from "../../../task-master";
+import { setStoredProvider, useEnabledProviders } from "../../../providers/useEnabledProviders";
 import {
   Dialog,
   DialogTrigger,
@@ -22,15 +23,6 @@ import {
   CommandItem,
   Card,
 } from "../../../../shared/view/ui";
-
-const PROVIDER_META: { id: LLMProvider; name: string }[] = [
-  { id: "claude", name: "Anthropic" },
-  { id: "codex", name: "OpenAI" },
-  { id: "gemini", name: "Google" },
-  { id: "cursor", name: "Cursor" },
-  { id: "opencode", name: "OpenCode" },
-  { id: "qwen", name: "Qwen" },
-];
 
 const MOD_KEY =
   typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl";
@@ -75,6 +67,10 @@ function getModelConfig(
   return entry ?? { OPTIONS: [], DEFAULT: "" };
 }
 
+function getProviderDisplayName(p: LLMProvider, displayNames: Record<LLMProvider, string>) {
+  return displayNames[p] ?? p;
+}
+
 function getCurrentModel(
   p: LLMProvider,
   c: string,
@@ -90,15 +86,6 @@ function getCurrentModel(
   if (p === "opencode") return o;
   if (p === "qwen") return q;
   return cu;
-}
-
-function getProviderDisplayName(p: LLMProvider) {
-  if (p === "claude") return "Claude";
-  if (p === "cursor") return "Cursor";
-  if (p === "codex") return "Codex";
-  if (p === "opencode") return "OpenCode";
-  if (p === "qwen") return "Qwen";
-  return "Gemini";
 }
 
 export default function ProviderSelectionEmptyState({
@@ -127,15 +114,16 @@ export default function ProviderSelectionEmptyState({
   setInput,
 }: ProviderSelectionEmptyStateProps) {
   const { t } = useTranslation("chat");
+  const { enabled: enabledProviders, vendorNames, displayNames } = useEnabledProviders();
   const [dialogOpen, setDialogOpen] = useState(false);
 
   const visibleProviderGroups = useMemo<ProviderGroup[]>(() => {
-    return PROVIDER_META.map((p) => ({
-      id: p.id,
-      name: p.name,
-      models: providerModelCatalog[p.id]?.OPTIONS ?? [],
+    return enabledProviders.map((id) => ({
+      id,
+      name: vendorNames[id],
+      models: providerModelCatalog[id]?.OPTIONS ?? [],
     }));
-  }, [providerModelCatalog]);
+  }, [providerModelCatalog, enabledProviders, vendorNames]);
 
   const nextTaskPrompt = t("tasks.nextTaskPrompt", {
     defaultValue: "Start the next task",
@@ -187,7 +175,7 @@ export default function ProviderSelectionEmptyState({
   const handleModelSelect = useCallback(
     (providerId: LLMProvider, modelValue: string) => {
       setProvider(providerId);
-      localStorage.setItem("selected-provider", providerId);
+      setStoredProvider(providerId);
       setModelForProvider(providerId, modelValue);
       setDialogOpen(false);
       setTimeout(() => textareaRef.current?.focus(), 100);
@@ -223,7 +211,7 @@ export default function ProviderSelectionEmptyState({
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1">
                       <span className="text-xs font-semibold text-foreground">
-                        {getProviderDisplayName(provider)}
+                        {getProviderDisplayName(provider, displayNames)}
                       </span>
                       <span className="text-xs text-muted-foreground">·</span>
                       <span className="truncate text-xs text-foreground">

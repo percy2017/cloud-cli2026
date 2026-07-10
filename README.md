@@ -1,5 +1,9 @@
-# openflow v0.2
-WebApp para gestionar agentes cli, Proyectos y Repositorios
+# CloudCli v0.2
+WebApp en node22 para gestionar agentes cli, proyectos y repositorios
+
+```bash
+PATH=/opt/node22/bin:$PATH
+```
 
 ## Instalacion
 
@@ -12,8 +16,8 @@ npm install
 ## Produccion con pm2
 
 ```bash
-PATH=/opt/node22/bin:$PATH npm run build npm run build 
-pm2 start ecosystem.
+npm run build npm run build 
+pm2 start ecosystem.config.cjs
 ```
 
 ## Agentes Cli Disponibles
@@ -30,3 +34,4 @@ pm2 start ecosystem.
 - Lecturas de imagenes y Audios
 - Gestion de MCP
 - Gestion de Skills
+- Gestion de plugins

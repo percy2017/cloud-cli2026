@@ -9,6 +9,9 @@ types, adding a new one) see [`server/modules/providers/README.md`](../../server
 This file documents **how each individual provider behaves** from CloudCLI's point of
 view and gives you the at-a-glance comparison between them.
 
+For **operator-controlled provider visibility & order** (env-driven hide/show/reorder
+of the providers visible in the UI), see [`visibility.md`](./visibility.md).
+
 ## Provider catalog
 
 | Provider | What it is | Engineering status | User testing status | Doc |
